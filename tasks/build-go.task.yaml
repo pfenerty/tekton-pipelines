@@ -1,0 +1,30 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: build-go
+  namespace: tekton-builds
+spec:
+  params:
+    - name: build-path
+      description: The build directory used by task
+      type: string
+      default: ./
+    - name: golang-version
+      description: golang version to use for the build
+      type: string
+      default: 1.23.0
+    - name: golang-variant
+      description: golang image variant to use for the build
+      type: string
+      default: alpine
+  steps:
+    - name: build
+      image: golang:$(params.golang-version)-$(params.golang-variant)
+      workingDir: /go
+      command:
+        - go
+        - build
+      args:
+        - -C=$(workspaces.workspace.path)/$(params.build-path)
+  workspaces:
+    - name: workspace

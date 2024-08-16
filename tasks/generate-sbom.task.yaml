@@ -1,0 +1,30 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: generate-sbom
+  namespace: tekton-builds
+spec:
+  params:
+    - name: scan-target
+      description: Name (reference) of the image to sign
+      type: string
+    - name: output-format
+      description: SBOM output format
+      type: string
+      default: cyclonedx-json
+  steps:
+    - args:
+        - $(params.scan-target)
+        - -o $(params.output-format)=$(workspaces.workspace.path)/sbom
+        - -o table
+      # env:
+      #   - name: DOCKER_CONFIG
+      #     value: /config
+      image: anchore/syft:v1.11.0-debug
+      name: generate-sbom
+      workingDir: /tmp
+  workspaces:
+    - name: workspace
+  #   - mountPath: /config
+  #     name: dockerconfig
+  #     optional: true

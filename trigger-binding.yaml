@@ -1,0 +1,15 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-push-pipelinebinding
+  namespace: tekton-builds
+spec:
+  params:
+    - name: gitrevision
+      value: $(body.head_commit.id)
+    - name: namespace
+      value: tekton-builds
+    - name: gitrepositoryurl
+      value: https://github.com/$(body.repository.full_name)
+    - name: projectname
+      value: $(body.repository.name)

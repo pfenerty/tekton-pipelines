@@ -1,0 +1,61 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: container-image-build
+  namespace: tekton-builds
+spec:
+  params:
+    - name: git-url
+      type: string
+    - name: git-revision
+      type: string
+    - name: image-name
+      type: string
+  tasks:
+    - name: fix-file-perms
+      taskRef:
+        kind: Task
+        name: fix-file-perms
+      workspaces:
+        - name: source
+          workspace: git-source
+    - name: clone
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+      runAfter:
+        - fix-file-perms
+      taskRef:
+        kind: Task
+        params:
+          - name: url
+            value: https://github.com/tektoncd/catalog.git
+          - name: pathInRepo
+            value: /task/git-clone/0.9/git-clone.yaml
+          - name: revision
+            value: main
+        resolver: git
+      workspaces:
+        - name: output
+          workspace: git-source
+    - name: build
+      params:
+        - name: docker-repo
+          value: $(params.image-name)
+        - name: path-to-app-root
+          value: app
+      runAfter:
+        - clone
+      taskRef:
+        kind: Task
+        name: ko-build
+      workspaces:
+        - name: source
+          workspace: git-source
+        - name: dockerconfig
+          workspace: dockerconfig
+  workspaces:
+    - name: git-source
+    - name: dockerconfig

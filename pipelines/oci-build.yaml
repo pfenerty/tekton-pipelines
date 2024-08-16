@@ -1,0 +1,91 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: oci-build
+  namespace: tekton-builds
+spec:
+  params:
+    - name: git-url
+      type: string
+    - name: git-revision
+      type: string
+    - name: image-name
+      type: string
+  tasks:
+    - name: fix-file-perms
+      taskRef:
+        kind: Task
+        name: fix-file-perms
+      workspaces:
+        - name: source
+          workspace: git-source
+    - name: fetch-from-git
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+      runAfter:
+        - fix-file-perms
+      taskRef:
+        kind: Task
+        params:
+          - name: url
+            value: https://github.com/tektoncd/catalog.git
+          - name: pathInRepo
+            value: /task/git-clone/0.9/git-clone.yaml
+          - name: revision
+            value: main
+        resolver: git
+      workspaces:
+        - name: output
+          workspace: git-source
+    - name: build-image
+      params:
+        - name: image-name
+          value: $(params.image-name)
+      runAfter:
+        - fetch-from-git
+      taskRef:
+        kind: Task
+        name: build-oci
+      workspaces:
+        - name: source
+          workspace: git-source
+        - name: dockerconfig
+          workspace: dockerconfig
+    - name: generate-image-sbom
+      params:
+        - name: image-name
+          value: $(params.image-name)
+        - name: image-digest
+          value: $(tasks.build-image.results.image-digest)
+      runAfter:
+        - build-image
+      taskRef:
+        kind: Task
+        name: vuln-scan
+      workspaces:
+        - name: source
+          workspace: git-source
+        - name: dockerconfig
+          workspace: dockerconfig
+    - name: sign-image
+      params:
+        - name: image-name
+          value: $(params.image-name)
+        - name: image-digest
+          value: $(tasks.build-image.results.image-digest)
+      runAfter:
+        - generate-image-sbom
+      taskRef:
+        kind: Task
+        name: cosign-sign-image
+      workspaces:
+        - name: source
+          workspace: git-source
+        - name: dockerconfig
+          workspace: dockerconfig
+  workspaces:
+    - name: git-source
+    - name: dockerconfig

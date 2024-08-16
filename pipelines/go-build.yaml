@@ -1,0 +1,89 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: go-build
+  namespace: tekton-builds
+spec:
+  params:
+    - name: git-url
+      type: string
+    - name: git-revision
+      type: string
+    - name: project-name
+      type: string
+    - name: app-root
+      description: path to root of the golang app (should contain go.mod, go.sum files)
+      type: string
+    - name: build-path
+      description: path under app-root to target for build
+      type: string
+    - name: golang-version
+      description: golang version to use for the build
+      type: string
+      default: 1.23.0
+    - name: golang-variant
+      description: golang image variant to use for the build
+      type: string
+      default: alpine
+  tasks:
+    - name: clone
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+      taskRef:
+        kind: Task
+        params:
+          - name: url
+            value: https://github.com/tektoncd/catalog.git
+          - name: pathInRepo
+            value: /task/git-clone/0.9/git-clone.yaml
+          - name: revision
+            value: main
+        resolver: git
+      workspaces:
+        - name: output
+          workspace: workspace
+    - name: build
+      params:
+        - name: build-path
+          value: $(params.app-root)/$(params.build-path)
+        - name: golang-version
+          value: $(params.golang-version)
+        - name: golang-variant
+          value: $(params.golang-variant)
+      runAfter:
+        - clone
+      taskRef:
+        kind: Task
+        name: build-go
+      workspaces:
+        - name: workspace
+          workspace: workspace
+    - name: generate-sbom
+      params:
+        - name: scan-target
+          value: $(workspaces.workspace.path)/$(params.app-root)
+      runAfter:
+        - clone
+      taskRef:
+        kind: Task
+        name: generate-sbom
+      workspaces:
+        - name: workspace
+          workspace: workspace
+    - name: vulnerability-scan
+      params:
+        - name: sbom-path
+          value: $(workspaces.workspace.path)/sbom
+      runAfter:
+        - generate-sbom
+      taskRef:
+        kind: Task
+        name: vulnerability-scan
+      workspaces:
+        - name: workspace
+          workspace: workspace
+  workspaces:
+    - name: workspace

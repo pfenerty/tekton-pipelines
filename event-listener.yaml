@@ -1,0 +1,21 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: github-listener
+  namespace: tekton-builds
+spec:
+  serviceAccountName: tekton-triggers
+  triggers:
+    - bindings:
+        - kind: TriggerBinding
+          ref: github-push-pipelinebinding
+      interceptors:
+        - params:
+            - name: eventTypes
+              value:
+                - push
+          ref:
+            kind: ClusterInterceptor
+            name: github
+      template:
+        ref: github-push-triggertemplate
