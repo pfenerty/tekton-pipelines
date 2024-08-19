@@ -8,7 +8,7 @@ spec:
   triggers:
     - bindings:
         - kind: TriggerBinding
-          ref: github-push-pipelinebinding
+          ref: github-push
       interceptors:
         - params:
             - name: eventTypes
@@ -18,4 +18,17 @@ spec:
             kind: ClusterInterceptor
             name: github
       template:
-        ref: github-push-triggertemplate
+        ref: github-push-trigger-template
+    - bindings:
+        - kind: TriggerBinding
+          ref: github-pull-request
+      interceptors:
+        - params:
+            - name: eventTypes
+              value:
+                - pull_request
+          ref:
+            kind: ClusterInterceptor
+            name: github
+      template:
+        ref: github-pull-request-trigger-template

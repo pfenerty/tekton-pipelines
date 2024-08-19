@@ -1,0 +1,51 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: github-pull-request-trigger-template
+  namespace: tekton-builds
+spec:
+  params:
+    - name: gitrevision
+      description: The git revision
+    - name: gitrepositoryurl
+      description: The git repository url
+    - name: namespace
+      description: The namespace to create the resources
+    - name: projectname
+      description: name of the project
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: github-push-pipeline-run-
+        namespace: $(tt.params.namespace)
+      spec:
+        params:
+          - name: git-revision
+            value: $(tt.params.gitrevision)
+          - name: git-url
+            value: $(tt.params.gitrepositoryurl)
+          - name: project-name
+            value: $(tt.params.projectname)
+          - name: app-root
+            value: src
+          - name: build-path
+            value: cmd
+        pipelineRef:
+          name: go-merge-request
+        # podTemplate:
+        #   imagePullSecrets:
+        #     - name: tekton-triggers-regcred
+        serviceAccountName: tekton-triggers
+        workspaces:
+          - name: workspace
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+          # - name: dockerconfig
+          #   secret:
+          #     secretName: ghcr-regcred

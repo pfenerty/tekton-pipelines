@@ -1,7 +1,7 @@
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: go-build
+  name: go-push
   namespace: tekton-builds
 spec:
   params:
@@ -45,7 +45,7 @@ spec:
       workspaces:
         - name: output
           workspace: workspace
-    - name: build
+    - name: test
       params:
         - name: build-path
           value: $(params.app-root)/$(params.build-path)
@@ -57,31 +57,7 @@ spec:
         - clone
       taskRef:
         kind: Task
-        name: build-go
-      workspaces:
-        - name: workspace
-          workspace: workspace
-    - name: generate-sbom
-      params:
-        - name: scan-target
-          value: $(workspaces.workspace.path)/$(params.app-root)
-      runAfter:
-        - clone
-      taskRef:
-        kind: Task
-        name: generate-sbom
-      workspaces:
-        - name: workspace
-          workspace: workspace
-    - name: vulnerability-scan
-      params:
-        - name: sbom-path
-          value: $(workspaces.workspace.path)/sbom
-      runAfter:
-        - generate-sbom
-      taskRef:
-        kind: Task
-        name: vulnerability-scan
+        name: test-go
       workspaces:
         - name: workspace
           workspace: workspace

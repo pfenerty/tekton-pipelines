@@ -1,12 +1,11 @@
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
 metadata:
-  name: github-push-triggertemplate
+  name: github-push-trigger-template
   namespace: tekton-builds
 spec:
   params:
     - name: gitrevision
-      default: master
       description: The git revision
     - name: gitrepositoryurl
       description: The git repository url
@@ -33,10 +32,7 @@ spec:
           - name: build-path
             value: cmd
         pipelineRef:
-          name: go-build
-        # podTemplate:
-        #   imagePullSecrets:
-        #     - name: tekton-triggers-regcred
+          name: go-push
         serviceAccountName: tekton-triggers
         workspaces:
           - name: workspace
@@ -47,6 +43,3 @@ spec:
                 resources:
                   requests:
                     storage: 1Gi
-          # - name: dockerconfig
-          #   secret:
-          #     secretName: ghcr-regcred
