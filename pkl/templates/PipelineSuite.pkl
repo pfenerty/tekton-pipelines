@@ -1,0 +1,36 @@
+@ModuleInfo { minPklVersion = "0.25.0" }
+module devops.PipelineSuite
+
+import "@k8s/K8sResource.pkl"
+import "EventListener.pkl"
+
+hidden projectName: String
+
+resources: Listing<K8sResource> = new {
+  new EventListener {
+    metadata {
+      name = projectName
+    }
+
+    spec {
+      serviceAccountName = projectName
+      triggers {
+        new {
+          bindings {
+            new {
+              ref = projectName + "-github-push"
+            }
+          }
+          interceptors {
+          	new {
+             ref {
+               kind = "ClusterInterceptor"
+               name = "github"
+             }
+           }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+import "templates/PipelineSuite.pkl"
+import "@k8s/K8sResource.pkl"
+hidden projecname = "team1-pipelines"
+
+test = new PipelineSuite {
+  projectName = "team1-pipelines"
+}
+
+output {
+  value = test.resources
+  renderer = (K8sResource.output.renderer as YamlRenderer) {
+    isStream = true
+  }
+}

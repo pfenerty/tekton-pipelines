@@ -4,13 +4,6 @@ import (
 	timoniv1 "timoni.sh/core/v1alpha1"
 )
 
-#Parameter: {
-	name: string
-	description: string
-	type: string
-	default?: string
-}
-
 // Config defines the schema and defaults for the Instance values.
 #Config: {
 	// The kubeVersion is a required field, set at apply-time
@@ -43,10 +36,17 @@ import (
 	selector: timoniv1.#Selector & {#Name: metadata.name}
 
 	paramters: {
-		appRoot: #Parameter
-		buildPath: #Paramater
-		golangVersion: #Paramater
-		golangVariant: #Paramater
+		appRoot!: #Parameter,
+		buildPath!: #Paramater,
+		golangVersion!: #Paramater,
+		golangVariant!: #Paramater,
+	}
+
+	#Parameter: {
+		name: string
+		description: string
+		type: string
+		default?: string
 	}
 
 	pipeline: {
