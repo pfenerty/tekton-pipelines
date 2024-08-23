@@ -3,6 +3,7 @@ open module tekton.eventlistener
 
 extends "@k8s/K8sResource.pkl"
 import "@k8s/apimachinery/pkg/apis/meta/v1/ObjectMeta.pkl"
+import "Trigger.pkl"
 
 fixed apiVersion = "triggers.tekton.dev/v1beta1"
 fixed kind = "EventListener"
@@ -15,34 +16,4 @@ spec: EventListenerSpec
 class EventListenerSpec {
   serviceAccountName: String
   triggers: Listing<Trigger>
-}
-
-class Trigger {
-  bindings: Listing<TriggerReference>
-  interceptors: Listing<TriggerInterceptor>
-}
-
-class TriggerReference extends Reference {
-  kind = "TriggerBinding"
-}
-
-class TriggerInterceptor {
-  ref: InterceptorReference
-  params: Listing<Param>
-  template: Reference
-}
-
-class Param {
-  name: String
-  value: String
-}
-
-class InterceptorReference {
-	kind: String
-	name: String
-}
-
-abstract class Reference {
-  kind: String
-  ref: String
 }

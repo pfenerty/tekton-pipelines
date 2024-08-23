@@ -1,0 +1,28 @@
+extends "../../templates/Trigger.pkl"
+
+hidden resourcePrefix: String
+
+bindings {
+  new {
+    ref = resourcePrefix + "-github-push"
+  }
+}
+interceptors {
+  new {
+    ref {
+      kind = "ClusterInterceptor"
+      name = "github"
+    }
+    params {
+      new {
+        name = "eventTypes"
+        value {
+          "push"
+        }
+      }
+    }
+  }
+}
+template {
+  ref = "github-push-trigger-template"
+}

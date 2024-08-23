@@ -3,6 +3,7 @@ module devops.PipelineSuite
 
 import "@k8s/K8sResource.pkl"
 import "EventListener.pkl"
+import "../objects/triggers/GitHubPush.pkl"
 
 hidden projectName: String
 
@@ -15,20 +16,8 @@ resources: Listing<K8sResource> = new {
     spec {
       serviceAccountName = projectName
       triggers {
-        new {
-          bindings {
-            new {
-              ref = projectName + "-github-push"
-            }
-          }
-          interceptors {
-          	new {
-             ref {
-               kind = "ClusterInterceptor"
-               name = "github"
-             }
-           }
-          }
+        new GitHubPush {
+          resourcePrefix = projectName
         }
       }
     }

@@ -1,0 +1,55 @@
+test {
+  resources {
+    new {
+      apiVersion = "triggers.tekton.dev/v1beta1"
+      kind = "EventListener"
+      metadata {
+        generation = null
+        finalizers = null
+        resourceVersion = null
+        annotations = null
+        generateName = null
+        deletionTimestamp = null
+        labels = null
+        ownerReferences = null
+        selfLink = null
+        deletionGracePeriodSeconds = null
+        uid = null
+        managedFields = null
+        creationTimestamp = null
+        name = "team1-pipelines"
+        namespace = null
+        clusterName = null
+      }
+      spec {
+        serviceAccountName = "team1-pipelines"
+        triggers {
+          new {
+            bindings {
+              new {
+                kind = "TriggerBinding"
+                ref = "team1-pipelines-github-push"
+              }
+            }
+            interceptors {
+              new {
+                ref {
+                  kind = "ClusterInterceptor"
+                  name = "github"
+                }
+                params {
+                  new {
+                    name = "eventTypes"
+                    value {
+                      "push"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

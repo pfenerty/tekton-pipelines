@@ -1,0 +1,30 @@
+@ModuleInfo { minPklVersion = "0.26.0" }
+open module tekton.trigger.Trigger
+
+bindings: Listing<TriggerReference>
+interceptors: Listing<TriggerInterceptor>
+template: TriggerTemplateReference
+
+class TriggerReference {
+  kind = "TriggerBinding"
+  ref: String
+}
+
+class TriggerInterceptor {
+  ref: InterceptorReference
+  params: Listing<TriggerParameter>
+}
+
+class InterceptorReference {
+  kind = "ClusterInterceptor"
+  name: String
+}
+
+class TriggerParameter {
+  name: String
+  value: Listing<String>
+}
+
+class TriggerTemplateReference {
+  ref: String
+}

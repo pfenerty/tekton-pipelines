@@ -10,13 +10,13 @@ spec:
         - kind: TriggerBinding
           ref: github-push
       interceptors:
-        - params:
+        - ref:
+            kind: ClusterInterceptor
+            name: github
+          params:
             - name: eventTypes
               value:
                 - push
-          ref:
-            kind: ClusterInterceptor
-            name: github
       template:
         ref: github-push-trigger-template
     - bindings:
