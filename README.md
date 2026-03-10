@@ -1,9 +1,10 @@
 # tekton-pipelines
 
-Reusable Tekton Pipelines defined with [cdk8s](https://cdk8s.io/) (TypeScript).
+Reusable Tekton Pipelines defined with [cdk8s](https://cdk8s.io/) (TypeScript),
+published as an npm library.
 
 Pipelines, tasks, and triggers are modelled as typed TypeScript constructs. Running
-`make synth` produces plain Kubernetes YAML in `dist/` that can be applied with
+`make synth` produces plain Kubernetes YAML in `synth-output/` that can be applied with
 `kubectl` or picked up by any GitOps tool.
 
 ## Prerequisites
@@ -15,53 +16,154 @@ Pipelines, tasks, and triggers are modelled as typed TypeScript constructs. Runn
 | Tekton Pipelines | ≥ v0.59 |
 | Tekton Triggers | ≥ v0.26 |
 
-## Quick start
+## Installation
+
+```bash
+npm install @pfenerty/tekton-pipelines
+```
+
+Peer dependencies (`cdk8s` and `constructs`) must be installed in the consuming project:
+
+```bash
+npm install cdk8s constructs
+```
+
+## Quick start (local synthesis)
 
 ```bash
 npm install        # install Node.js dependencies
-make synth         # generate YAML → dist/
+make synth         # generate YAML → synth-output/
 make diff          # dry-run against the cluster (requires kubectl)
 make apply         # apply to the cluster
+```
+
+## Testing
+
+```bash
+npm test           # run the Vitest test suite (30 tests)
 ```
 
 ## Project layout
 
 ```
 src/
+  index.ts         Public API — re-exports all constructs, constants, and types
   lib/
-    tasks/           Reusable Task constructs
-    triggers/        Reusable TriggerBinding + TriggerTemplate pairs
-    pipelines/       Reusable Pipeline constructs
+    tasks/         Task constructs (TektonTaskConstruct + PipelineTask wrappers)
+    pipelines/     Pre-built Pipeline constructs
+    triggers/      GitHub TriggerBinding + TriggerTemplate pairs
+    builder/       PipelineBuilder — fluent API for composing custom pipelines
   charts/
-    go-pipelines.chart.ts    Go CI tasks + pipelines
-    oci-pipelines.chart.ts   OCI image build pipelines
-    tekton-infra.chart.ts    RBAC + EventListener (GitHub webhook)
-  main.ts            App entry point — composes charts and calls app.synth()
-dist/                Synthesized YAML (generated, not committed)
+    tekton-infra.chart.ts   RBAC, ServiceAccount, EventListener (GitHub webhook)
+examples/
+  main.ts          Reference implementation — demonstrates pre-built and custom pipelines
+synth-output/      Synthesized YAML (generated, not committed)
+dist/              Compiled library output (generated, not committed)
 ```
+
+## Usage
+
+### Pre-built pipelines
+
+Import and instantiate ready-made pipelines for common Go and OCI workflows:
+
+```typescript
+import { App, Chart } from 'cdk8s';
+import {
+  GoPushPipeline,
+  GoPullRequestPipeline,
+  TektonInfraChart,
+} from '@pfenerty/tekton-pipelines';
+
+const app = new App();
+const NAMESPACE = 'tekton-builds';
+
+const goPushChart = new Chart(app, 'pipeline-go-push');
+new GoPushPipeline(goPushChart, 'pipeline', { namespace: NAMESPACE });
+
+const goPrChart = new Chart(app, 'pipeline-go-pull-request');
+new GoPullRequestPipeline(goPrChart, 'pipeline', { namespace: NAMESPACE });
+
+new TektonInfraChart(app, 'tekton-infra', {
+  namespace: NAMESPACE,
+  pushPipelineRef: 'go-push',
+  pullRequestPipelineRef: 'go-merge-request',
+  appRoot: 'src',
+  buildPath: 'cmd',
+});
+
+app.synth();
+```
+
+### Custom pipelines with PipelineBuilder
+
+`PipelineBuilder` lets you compose your own pipeline from individual task constructs
+with an explicit dependency graph. Tasks with overlapping dependencies run in parallel.
+
+```typescript
+import { App, Chart } from 'cdk8s';
+import {
+  PipelineBuilder,
+  GitClonePipelineTask,
+  GoTestPipelineTask,
+  GenerateSbomPipelineTask,
+  VulnScanPipelineTask,
+  PARAM_GIT_URL,
+  PARAM_GIT_REVISION,
+  PARAM_PROJECT_NAME,
+  WS_WORKSPACE,
+} from '@pfenerty/tekton-pipelines';
+
+const app = new App();
+const chart = new Chart(app, 'pipeline-custom-go');
+
+// Dependency graph:
+//   clone ──┬── test
+//           └── sbom ── vuln-scan
+new PipelineBuilder()
+  .addFirst('clone', () => new GitClonePipelineTask())
+  .addTask('test', ([clone]) => new GoTestPipelineTask({ runAfter: clone }), ['clone'])
+  .addTask('sbom', ([clone]) => new GenerateSbomPipelineTask({ runAfter: clone }), ['clone'])
+  .addTask('vuln', ([sbom]) => new VulnScanPipelineTask({ runAfter: sbom }), ['sbom'])
+  .build(chart, 'pipeline', {
+    name: 'my-custom-go-pipeline',
+    namespace: 'tekton-builds',
+    params: [
+      { name: PARAM_GIT_URL, type: 'string' },
+      { name: PARAM_GIT_REVISION, type: 'string' },
+      { name: PARAM_PROJECT_NAME, type: 'string' },
+    ],
+    workspaces: [{ name: WS_WORKSPACE }],
+  });
+
+app.synth();
+```
+
+**PipelineBuilder methods:**
+
+| Method | Description |
+|--------|-------------|
+| `addFirst(key, factory)` | Register a task with no dependencies (runs first). |
+| `addTask(key, factory, dependsOn)` | Register a task with explicit dependencies. Tasks sharing the same dependencies run in parallel. |
+| `addAfterAll(key, factory)` | Register a task that depends on every previously registered task (simple linear append). |
+| `build(scope, id, opts)` | Topologically sort tasks and emit the Tekton Pipeline ApiObject. |
 
 ## How to add a new Task
 
-1. Create `src/lib/tasks/my-task.task.ts` extending `Construct`.
-2. Define a props interface (`MyTaskProps`) with `namespace` and any
-   task-specific configuration.
-3. Instantiate your task inside the appropriate chart (e.g. `GoPipelinesChart`).
+1. Create `src/lib/tasks/my-task.task.ts` extending `TektonTaskConstruct`.
+2. Define a props interface extending `TektonTaskProps` with any task-specific configuration.
+3. Export the new class from `src/index.ts`.
 4. Run `make synth` to verify.
 
 ```typescript
 // src/lib/tasks/my-task.task.ts
+import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
 import { Construct } from 'constructs';
-import { ApiObject } from 'cdk8s';
 
-export class MyTask extends Construct {
-  public readonly taskName: string;
-  constructor(scope: Construct, id: string, props: { namespace: string }) {
-    super(scope, id);
-    this.taskName = 'my-task';
-    new ApiObject(this, 'resource', {
-      apiVersion: 'tekton.dev/v1',
-      kind: 'Task',
-      metadata: { name: this.taskName, namespace: props.namespace },
+export class MyTask extends TektonTaskConstruct {
+  constructor(scope: Construct, id: string, props: TektonTaskProps) {
+    super(scope, id, props, {
+      name: 'my-task',
       spec: { /* ... */ },
     });
   }
@@ -71,15 +173,15 @@ export class MyTask extends Construct {
 ## How to add a new Pipeline
 
 1. Create `src/lib/pipelines/my-pipeline.pipeline.ts`.
-2. Reference task names via props (e.g. `testTaskName`) rather than
-   hardcoding strings — this keeps task and pipeline constructs loosely coupled.
-3. Wire it into a chart in `src/charts/`.
+2. Reference task names via props (e.g. `testTaskName`) rather than hardcoding strings —
+   this keeps task and pipeline constructs loosely coupled.
+3. Export the new class and its props type from `src/index.ts`.
 
 ## How to add a new Trigger (event source)
 
 Each trigger encapsulates its `TriggerBinding` and `TriggerTemplate` as a pair:
 
-1. Create `src/lib/triggers/my-event.trigger.ts` extending `Construct`.
+1. Create `src/lib/triggers/my-event.trigger.ts` extending `GitHubTriggerBase`.
 2. Expose `bindingRef` and `templateRef` string properties.
 3. In `TektonInfraChart`, instantiate your trigger and add an entry to the
    `EventListener`'s `triggers` array referencing those refs.
@@ -101,12 +203,20 @@ const myTrigger = new MyEventTrigger(this, 'my-trigger', {
 
 ## Synthesized manifests
 
-`make synth` produces three files in `dist/`:
+`make synth` writes one YAML file per `Chart` into `synth-output/`. When running the
+reference implementation in `examples/main.ts`, the output includes:
 
 | File | Contents |
 |------|----------|
-| `go-pipelines.k8s.yaml` | test-go, build-go, generate-sbom, vulnerability-scan Tasks; go-push and go-merge-request Pipelines |
-| `oci-pipelines.k8s.yaml` | container-image-build and oci-build Pipelines (reference external Tasks) |
+| `task-go-test.k8s.yaml` | `test-go` Task |
+| `task-go-build.k8s.yaml` | `build-go` Task |
+| `task-generate-sbom.k8s.yaml` | `generate-sbom` Task |
+| `task-vuln-scan.k8s.yaml` | `vulnerability-scan` Task |
+| `pipeline-go-push.k8s.yaml` | `go-push` Pipeline |
+| `pipeline-go-pull-request.k8s.yaml` | `go-merge-request` Pipeline |
+| `pipeline-container-image-build.k8s.yaml` | `container-image-build` Pipeline |
+| `pipeline-oci-build.k8s.yaml` | `oci-build` Pipeline |
+| `pipeline-custom-go.k8s.yaml` | Custom pipeline built with PipelineBuilder |
 | `tekton-infra.k8s.yaml` | ServiceAccount, RBAC, TriggerBindings, TriggerTemplates, EventListener |
 
 ## External Tasks
