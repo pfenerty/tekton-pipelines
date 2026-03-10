@@ -1,0 +1,10 @@
+src/
+examples/
+*.ts
+!dist/**/*.d.ts
+!dist/**/*.d.ts.map
+tsconfig.json
+cdk8s.yaml
+synth-output/
+Makefile
+.idea/
