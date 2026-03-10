@@ -1,8 +1,8 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
-import { FixFilePermsPipelineTask } from '../pipeline-tasks/fix-file-perms.pipeline-task';
-import { GitClonePipelineTask } from '../pipeline-tasks/git-clone.pipeline-task';
-import { KoBuildPipelineTask } from '../pipeline-tasks/ko-build.pipeline-task';
+import { FixFilePermsPipelineTask } from '../tasks/fix-file-perms.task';
+import { GitClonePipelineTask } from '../tasks/git-clone.task';
+import { KoBuildPipelineTask } from '../tasks/ko-build.task';
 
 export interface ContainerImageBuildPipelineProps {
   namespace: string;

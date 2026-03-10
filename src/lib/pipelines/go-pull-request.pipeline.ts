@@ -1,9 +1,9 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
-import { GitClonePipelineTask } from '../pipeline-tasks/git-clone.pipeline-task';
-import { GoTestPipelineTask } from '../pipeline-tasks/go-test.pipeline-task';
-import { GenerateSbomPipelineTask } from '../pipeline-tasks/generate-sbom.pipeline-task';
-import { VulnScanPipelineTask } from '../pipeline-tasks/vuln-scan.pipeline-task';
+import { GitClonePipelineTask } from '../tasks/git-clone.task';
+import { GoTestPipelineTask } from '../tasks/go-test.task';
+import { GenerateSbomPipelineTask } from '../tasks/generate-sbom.task';
+import { VulnScanPipelineTask } from '../tasks/vuln-scan.task';
 
 export interface GoPullRequestPipelineProps {
   namespace: string;

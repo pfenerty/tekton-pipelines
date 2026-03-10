@@ -1,7 +1,7 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
-import { GitClonePipelineTask } from '../pipeline-tasks/git-clone.pipeline-task';
-import { GoTestPipelineTask } from '../pipeline-tasks/go-test.pipeline-task';
+import { GitClonePipelineTask } from '../tasks/git-clone.task';
+import { GoTestPipelineTask } from '../tasks/go-test.task';
 
 export interface GoPushPipelineProps {
   namespace: string;

@@ -1,10 +1,10 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
-import { FixFilePermsPipelineTask } from '../pipeline-tasks/fix-file-perms.pipeline-task';
-import { GitClonePipelineTask } from '../pipeline-tasks/git-clone.pipeline-task';
-import { BuildOciPipelineTask } from '../pipeline-tasks/build-oci.pipeline-task';
-import { GenerateImageSbomPipelineTask } from '../pipeline-tasks/generate-image-sbom.pipeline-task';
-import { CosignSignImagePipelineTask } from '../pipeline-tasks/cosign-sign-image.pipeline-task';
+import { FixFilePermsPipelineTask } from '../tasks/fix-file-perms.task';
+import { GitClonePipelineTask } from '../tasks/git-clone.task';
+import { BuildOciPipelineTask } from '../tasks/build-oci.task';
+import { GenerateImageSbomPipelineTask } from '../tasks/generate-image-sbom.task';
+import { CosignSignImagePipelineTask } from '../tasks/cosign-sign-image.task';
 
 export interface OciBuildPipelineProps {
   namespace: string;
