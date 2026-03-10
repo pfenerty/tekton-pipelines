@@ -1,7 +1,9 @@
 import { Construct } from 'constructs';
 import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
-import { WS_WORKSPACE, PARAM_BUILD_PATH, PARAM_GOLANG_VERSION, PARAM_GOLANG_VARIANT } from '../constants';
+import { PipelineTask } from './pipeline-task';
+import { WS_WORKSPACE, PARAM_BUILD_PATH, PARAM_GOLANG_VERSION, PARAM_GOLANG_VARIANT, PARAM_APP_ROOT } from '../constants';
 import { GOLANG_VERSION_PARAM_SPEC, GOLANG_VARIANT_PARAM_SPEC } from '../params';
+import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
  * Tekton Task that runs `go build` against a checked-out workspace.
@@ -34,12 +36,42 @@ export class GoBuildTask extends TektonTaskConstruct {
         {
           name: 'build',
           image: `golang:$(params.${PARAM_GOLANG_VERSION})-$(params.${PARAM_GOLANG_VARIANT})`,
-          workingDir: '/go',
           command: ['go', 'build'],
           args: [`-C=$(workspaces.${WS_WORKSPACE}.path)/$(params.${PARAM_BUILD_PATH})`],
         },
       ],
       workspaces: [{ name: WS_WORKSPACE }],
     };
+  }
+}
+
+/**
+ * Pipeline task step that runs the build-go Task.
+ *
+ * Consumes pipeline params: app-root, build-path, golang-version, golang-variant.
+ * Binds the 'workspace' pipeline workspace.
+ */
+export interface GoBuildPipelineTaskOptions {
+  runAfter?: PipelineTask | PipelineTask[];
+}
+
+export class GoBuildPipelineTask extends PipelineTask {
+  readonly name = 'build';
+
+  constructor(opts: GoBuildPipelineTaskOptions = {}) {
+    super(opts.runAfter ?? []);
+  }
+
+  toSpec(): Record<string, unknown> {
+    return this.buildSpec({
+      name: this.name,
+      taskRef: { kind: 'Task', name: GoBuildTask.defaultName },
+      params: [
+        { name: PARAM_BUILD_PATH, value: `$(params.${PARAM_APP_ROOT})/$(params.${PARAM_BUILD_PATH})` },
+        { name: PARAM_GOLANG_VERSION, value: `$(params.${PARAM_GOLANG_VERSION})` },
+        { name: PARAM_GOLANG_VARIANT, value: `$(params.${PARAM_GOLANG_VARIANT})` },
+      ],
+      workspaces: [WORKSPACE_BINDING],
+    });
   }
 }

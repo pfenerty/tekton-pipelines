@@ -1,6 +1,6 @@
 import { ImageDependentPipelineTask } from './image-dependent-pipeline-task';
 import { PipelineTask } from './pipeline-task';
-import { PARAM_IMAGE_NAME } from '../constants';
+import { PARAM_IMAGE_NAME, PARAM_IMAGE_DIGEST } from '../constants';
 import { GIT_SOURCE_BINDING, DOCKERCONFIG_BINDING } from '../workspaces';
 
 /**
@@ -20,7 +20,7 @@ export class CosignSignImagePipelineTask extends ImageDependentPipelineTask {
       taskRef: { kind: 'Task', name: 'cosign-sign-image' },
       params: [
         { name: PARAM_IMAGE_NAME, value: `$(params.${PARAM_IMAGE_NAME})` },
-        { name: 'image-digest', value: `$(tasks.${this.buildStepName}.results.image-digest)` },
+        { name: PARAM_IMAGE_DIGEST, value: `$(tasks.${this.buildStepName}.results.${PARAM_IMAGE_DIGEST})` },
       ],
       workspaces: [GIT_SOURCE_BINDING, DOCKERCONFIG_BINDING],
     });

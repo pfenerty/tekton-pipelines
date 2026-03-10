@@ -7,11 +7,16 @@ import { WS_GIT_SOURCE } from '../constants';
  *
  * Binds the given pipeline workspace as 'source'. Defaults to 'git-source'.
  */
+export interface FixFilePermsPipelineTaskOptions {
+  sourceWorkspace?: string;
+  runAfter?: PipelineTask | PipelineTask[];
+}
+
 export class FixFilePermsPipelineTask extends PipelineTask {
   readonly name = 'fix-file-perms';
   private readonly sourceWorkspace: string;
 
-  constructor(opts: { sourceWorkspace?: string; runAfter?: PipelineTask | PipelineTask[] } = {}) {
+  constructor(opts: FixFilePermsPipelineTaskOptions = {}) {
     super(opts.runAfter ?? []);
     this.sourceWorkspace = opts.sourceWorkspace ?? WS_GIT_SOURCE;
   }

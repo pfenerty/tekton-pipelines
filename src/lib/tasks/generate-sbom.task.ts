@@ -1,7 +1,14 @@
 import { Construct } from 'constructs';
 import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
 import { PipelineTask } from './pipeline-task';
-import { WS_WORKSPACE, PARAM_APP_ROOT, DEFAULT_OUTPUT_FORMAT } from '../constants';
+import {
+  WS_WORKSPACE,
+  PARAM_APP_ROOT,
+  DEFAULT_OUTPUT_FORMAT,
+  PARAM_SCAN_TARGET,
+  PARAM_OUTPUT_FORMAT,
+  SYFT_IMAGE,
+} from '../constants';
 import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
@@ -23,12 +30,12 @@ export class GenerateSbomTask extends TektonTaskConstruct {
     return {
       params: [
         {
-          name: 'scan-target',
+          name: PARAM_SCAN_TARGET,
           description: 'Name (reference) of the image or path to scan',
           type: 'string',
         },
         {
-          name: 'output-format',
+          name: PARAM_OUTPUT_FORMAT,
           description: 'SBOM output format',
           type: 'string',
           default: DEFAULT_OUTPUT_FORMAT,
@@ -37,11 +44,11 @@ export class GenerateSbomTask extends TektonTaskConstruct {
       steps: [
         {
           name: 'generate-sbom',
-          image: 'anchore/syft:v1.11.0-debug',
+          image: SYFT_IMAGE,
           workingDir: '/tmp',
           args: [
-            '$(params.scan-target)',
-            `-o $(params.output-format)=$(workspaces.${WS_WORKSPACE}.path)/sbom`,
+            `$(params.${PARAM_SCAN_TARGET})`,
+            `-o $(params.${PARAM_OUTPUT_FORMAT})=$(workspaces.${WS_WORKSPACE}.path)/sbom`,
             '-o table',
           ],
         },
@@ -57,10 +64,14 @@ export class GenerateSbomTask extends TektonTaskConstruct {
  * Consumes pipeline param: app-root (to build the scan-target path).
  * Binds the 'workspace' pipeline workspace. Writes SBOM to workspace/sbom.
  */
+export interface GenerateSbomPipelineTaskOptions {
+  runAfter?: PipelineTask | PipelineTask[];
+}
+
 export class GenerateSbomPipelineTask extends PipelineTask {
   readonly name = 'generate-sbom';
 
-  constructor(opts: { runAfter?: PipelineTask | PipelineTask[] } = {}) {
+  constructor(opts: GenerateSbomPipelineTaskOptions = {}) {
     super(opts.runAfter ?? []);
   }
 
@@ -70,7 +81,7 @@ export class GenerateSbomPipelineTask extends PipelineTask {
       taskRef: { kind: 'Task', name: GenerateSbomTask.defaultName },
       params: [
         {
-          name: 'scan-target',
+          name: PARAM_SCAN_TARGET,
           value: `$(workspaces.${WS_WORKSPACE}.path)/$(params.${PARAM_APP_ROOT})`,
         },
       ],

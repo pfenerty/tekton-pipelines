@@ -1,7 +1,7 @@
 import { Construct } from 'constructs';
 import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
 import { PipelineTask } from './pipeline-task';
-import { WS_WORKSPACE, DEFAULT_OUTPUT_FORMAT } from '../constants';
+import { WS_WORKSPACE, DEFAULT_OUTPUT_FORMAT, PARAM_SBOM_PATH, PARAM_OUTPUT_FORMAT, GRYPE_IMAGE } from '../constants';
 import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
@@ -23,12 +23,12 @@ export class VulnScanTask extends TektonTaskConstruct {
     return {
       params: [
         {
-          name: 'sbom-path',
+          name: PARAM_SBOM_PATH,
           description: 'Path to the sbom to scan',
           type: 'string',
         },
         {
-          name: 'output-format',
+          name: PARAM_OUTPUT_FORMAT,
           description: 'Vulnerability report format',
           type: 'string',
           default: DEFAULT_OUTPUT_FORMAT,
@@ -37,11 +37,11 @@ export class VulnScanTask extends TektonTaskConstruct {
       steps: [
         {
           name: 'vulnerability-scan',
-          image: 'anchore/grype:v0.79.6-debug',
+          image: GRYPE_IMAGE,
           workingDir: '/tmp',
           args: [
-            'sbom:$(params.sbom-path)',
-            `-o $(params.output-format)=$(workspaces.${WS_WORKSPACE}.path)/vulns`,
+            `sbom:$(params.${PARAM_SBOM_PATH})`,
+            `-o $(params.${PARAM_OUTPUT_FORMAT})=$(workspaces.${WS_WORKSPACE}.path)/vulns`,
             '-o table',
           ],
         },
@@ -57,10 +57,14 @@ export class VulnScanTask extends TektonTaskConstruct {
  * Reads the SBOM from workspace/sbom (the default output of GenerateSbomPipelineTask).
  * Binds the 'workspace' pipeline workspace.
  */
+export interface VulnScanPipelineTaskOptions {
+  runAfter?: PipelineTask | PipelineTask[];
+}
+
 export class VulnScanPipelineTask extends PipelineTask {
   readonly name = 'vulnerability-scan';
 
-  constructor(opts: { runAfter?: PipelineTask | PipelineTask[] } = {}) {
+  constructor(opts: VulnScanPipelineTaskOptions = {}) {
     super(opts.runAfter ?? []);
   }
 
@@ -69,7 +73,7 @@ export class VulnScanPipelineTask extends PipelineTask {
       name: this.name,
       taskRef: { kind: 'Task', name: VulnScanTask.defaultName },
       params: [
-        { name: 'sbom-path', value: `$(workspaces.${WS_WORKSPACE}.path)/sbom` },
+        { name: PARAM_SBOM_PATH, value: `$(workspaces.${WS_WORKSPACE}.path)/sbom` },
       ],
       workspaces: [WORKSPACE_BINDING],
     });
