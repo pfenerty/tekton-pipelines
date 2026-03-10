@@ -16,12 +16,10 @@ export class FixFilePermsPipelineTask extends PipelineTask {
   }
 
   toSpec(): Record<string, unknown> {
-    const spec: Record<string, unknown> = {
+    return this.buildSpec({
       name: this.name,
       taskRef: { kind: 'Task', name: 'fix-file-perms' },
       workspaces: [{ name: 'source', workspace: this.sourceWorkspace }],
-    };
-    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
-    return spec;
+    });
   }
 }

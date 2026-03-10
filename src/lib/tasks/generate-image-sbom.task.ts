@@ -1,4 +1,4 @@
-import { PipelineTask } from './pipeline-task';
+import { ImageDependentPipelineTask } from './image-dependent-pipeline-task';
 
 /**
  * Pipeline task step that runs the external vuln-scan Task against an OCI image.
@@ -9,17 +9,11 @@ import { PipelineTask } from './pipeline-task';
  * Consumes result from BuildOciPipelineTask: image-digest.
  * Binds the 'git-source' and 'dockerconfig' pipeline workspaces.
  */
-export class GenerateImageSbomPipelineTask extends PipelineTask {
+export class GenerateImageSbomPipelineTask extends ImageDependentPipelineTask {
   readonly name = 'generate-image-sbom';
-  private readonly buildStepName: string;
-
-  constructor(opts: { buildStep?: PipelineTask; runAfter?: PipelineTask | PipelineTask[] } = {}) {
-    super(opts.runAfter ?? []);
-    this.buildStepName = opts.buildStep?.name ?? 'build-image';
-  }
 
   toSpec(): Record<string, unknown> {
-    const spec: Record<string, unknown> = {
+    return this.buildSpec({
       name: this.name,
       taskRef: { kind: 'Task', name: 'vuln-scan' },
       params: [
@@ -30,8 +24,6 @@ export class GenerateImageSbomPipelineTask extends PipelineTask {
         { name: 'source', workspace: 'git-source' },
         { name: 'dockerconfig', workspace: 'dockerconfig' },
       ],
-    };
-    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
-    return spec;
+    });
   }
 }

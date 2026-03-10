@@ -25,7 +25,7 @@ export class GitClonePipelineTask extends PipelineTask {
   }
 
   toSpec(): Record<string, unknown> {
-    const spec: Record<string, unknown> = {
+    return this.buildSpec({
       name: this.name,
       taskRef: {
         resolver: 'git',
@@ -40,8 +40,6 @@ export class GitClonePipelineTask extends PipelineTask {
         { name: 'revision', value: '$(params.git-revision)' },
       ],
       workspaces: [{ name: 'output', workspace: this.workspace }],
-    };
-    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
-    return spec;
+    });
   }
 }

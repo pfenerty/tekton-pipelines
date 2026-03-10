@@ -15,7 +15,7 @@ export class KoBuildPipelineTask extends PipelineTask {
   }
 
   toSpec(): Record<string, unknown> {
-    const spec: Record<string, unknown> = {
+    return this.buildSpec({
       name: this.name,
       taskRef: { kind: 'Task', name: 'ko-build' },
       params: [
@@ -26,8 +26,6 @@ export class KoBuildPipelineTask extends PipelineTask {
         { name: 'source', workspace: 'git-source' },
         { name: 'dockerconfig', workspace: 'dockerconfig' },
       ],
-    };
-    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
-    return spec;
+    });
   }
 }
