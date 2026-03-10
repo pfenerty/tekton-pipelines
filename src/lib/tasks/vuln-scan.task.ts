@@ -1,6 +1,8 @@
 import { Construct } from 'constructs';
 import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
 import { PipelineTask } from './pipeline-task';
+import { WS_WORKSPACE, DEFAULT_OUTPUT_FORMAT } from '../constants';
+import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
  * Tekton Task that scans a SBOM for vulnerabilities using Grype.
@@ -29,7 +31,7 @@ export class VulnScanTask extends TektonTaskConstruct {
           name: 'output-format',
           description: 'Vulnerability report format',
           type: 'string',
-          default: 'cyclonedx-json',
+          default: DEFAULT_OUTPUT_FORMAT,
         },
       ],
       steps: [
@@ -39,12 +41,12 @@ export class VulnScanTask extends TektonTaskConstruct {
           workingDir: '/tmp',
           args: [
             'sbom:$(params.sbom-path)',
-            '-o $(params.output-format)=$(workspaces.workspace.path)/vulns',
+            `-o $(params.output-format)=$(workspaces.${WS_WORKSPACE}.path)/vulns`,
             '-o table',
           ],
         },
       ],
-      workspaces: [{ name: 'workspace' }],
+      workspaces: [{ name: WS_WORKSPACE }],
     };
   }
 }
@@ -67,9 +69,9 @@ export class VulnScanPipelineTask extends PipelineTask {
       name: this.name,
       taskRef: { kind: 'Task', name: VulnScanTask.defaultName },
       params: [
-        { name: 'sbom-path', value: '$(workspaces.workspace.path)/sbom' },
+        { name: 'sbom-path', value: `$(workspaces.${WS_WORKSPACE}.path)/sbom` },
       ],
-      workspaces: [{ name: 'workspace', workspace: 'workspace' }],
+      workspaces: [WORKSPACE_BINDING],
     });
   }
 }

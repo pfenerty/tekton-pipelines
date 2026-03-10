@@ -1,6 +1,7 @@
 import { Construct } from 'constructs';
 import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
-import { DEFAULT_GOLANG_VERSION, DEFAULT_GOLANG_VARIANT } from '../constants';
+import { WS_WORKSPACE, PARAM_BUILD_PATH, PARAM_GOLANG_VERSION, PARAM_GOLANG_VARIANT } from '../constants';
+import { GOLANG_VERSION_PARAM_SPEC, GOLANG_VARIANT_PARAM_SPEC } from '../params';
 
 /**
  * Tekton Task that runs `go build` against a checked-out workspace.
@@ -21,34 +22,24 @@ export class GoBuildTask extends TektonTaskConstruct {
     return {
       params: [
         {
-          name: 'build-path',
+          name: PARAM_BUILD_PATH,
           description: 'The build directory used by task',
           type: 'string',
           default: './',
         },
-        {
-          name: 'golang-version',
-          description: 'golang version to use for the build',
-          type: 'string',
-          default: DEFAULT_GOLANG_VERSION,
-        },
-        {
-          name: 'golang-variant',
-          description: 'golang image variant to use for the build',
-          type: 'string',
-          default: DEFAULT_GOLANG_VARIANT,
-        },
+        GOLANG_VERSION_PARAM_SPEC,
+        GOLANG_VARIANT_PARAM_SPEC,
       ],
       steps: [
         {
           name: 'build',
-          image: 'golang:$(params.golang-version)-$(params.golang-variant)',
+          image: `golang:$(params.${PARAM_GOLANG_VERSION})-$(params.${PARAM_GOLANG_VARIANT})`,
           workingDir: '/go',
           command: ['go', 'build'],
-          args: ['-C=$(workspaces.workspace.path)/$(params.build-path)'],
+          args: [`-C=$(workspaces.${WS_WORKSPACE}.path)/$(params.${PARAM_BUILD_PATH})`],
         },
       ],
-      workspaces: [{ name: 'workspace' }],
+      workspaces: [{ name: WS_WORKSPACE }],
     };
   }
 }

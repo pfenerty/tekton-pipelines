@@ -1,7 +1,9 @@
 import { Construct } from 'constructs';
 import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
 import { PipelineTask } from './pipeline-task';
-import { DEFAULT_GOLANG_VERSION, DEFAULT_GOLANG_VARIANT } from '../constants';
+import { WS_WORKSPACE, PARAM_BUILD_PATH, PARAM_GOLANG_VERSION, PARAM_GOLANG_VARIANT, PARAM_APP_ROOT } from '../constants';
+import { GOLANG_VERSION_PARAM_SPEC, GOLANG_VARIANT_PARAM_SPEC } from '../params';
+import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
  * Tekton Task that runs `go test` against a checked-out workspace.
@@ -22,33 +24,23 @@ export class GoTestTask extends TektonTaskConstruct {
     return {
       params: [
         {
-          name: 'build-path',
+          name: PARAM_BUILD_PATH,
           description: 'The build directory used by task',
           type: 'string',
           default: './',
         },
-        {
-          name: 'golang-version',
-          description: 'golang version to use for the build',
-          type: 'string',
-          default: DEFAULT_GOLANG_VERSION,
-        },
-        {
-          name: 'golang-variant',
-          description: 'golang image variant to use for the build',
-          type: 'string',
-          default: DEFAULT_GOLANG_VARIANT,
-        },
+        GOLANG_VERSION_PARAM_SPEC,
+        GOLANG_VARIANT_PARAM_SPEC,
       ],
       steps: [
         {
           name: 'test',
-          image: 'golang:$(params.golang-version)-$(params.golang-variant)',
-          workingDir: '$(workspaces.workspace.path)/$(params.build-path)',
+          image: `golang:$(params.${PARAM_GOLANG_VERSION})-$(params.${PARAM_GOLANG_VARIANT})`,
+          workingDir: `$(workspaces.${WS_WORKSPACE}.path)/$(params.${PARAM_BUILD_PATH})`,
           command: ['go', 'test'],
         },
       ],
-      workspaces: [{ name: 'workspace' }],
+      workspaces: [{ name: WS_WORKSPACE }],
     };
   }
 }
@@ -71,11 +63,11 @@ export class GoTestPipelineTask extends PipelineTask {
       name: this.name,
       taskRef: { kind: 'Task', name: GoTestTask.defaultName },
       params: [
-        { name: 'build-path', value: '$(params.app-root)/$(params.build-path)' },
-        { name: 'golang-version', value: '$(params.golang-version)' },
-        { name: 'golang-variant', value: '$(params.golang-variant)' },
+        { name: PARAM_BUILD_PATH, value: `$(params.${PARAM_APP_ROOT})/$(params.${PARAM_BUILD_PATH})` },
+        { name: PARAM_GOLANG_VERSION, value: `$(params.${PARAM_GOLANG_VERSION})` },
+        { name: PARAM_GOLANG_VARIANT, value: `$(params.${PARAM_GOLANG_VARIANT})` },
       ],
-      workspaces: [{ name: 'workspace', workspace: 'workspace' }],
+      workspaces: [WORKSPACE_BINDING],
     });
   }
 }

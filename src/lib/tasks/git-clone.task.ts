@@ -1,4 +1,5 @@
 import { PipelineTask } from './pipeline-task';
+import { WS_WORKSPACE, PARAM_GIT_URL, PARAM_GIT_REVISION } from '../constants';
 
 export interface GitClonePipelineTaskOptions {
   /** Step name within the pipeline. Defaults to 'clone'. */
@@ -21,7 +22,7 @@ export class GitClonePipelineTask extends PipelineTask {
   constructor(opts: GitClonePipelineTaskOptions = {}) {
     super(opts.runAfter ?? []);
     this.name = opts.name ?? 'clone';
-    this.workspace = opts.workspace ?? 'workspace';
+    this.workspace = opts.workspace ?? WS_WORKSPACE;
   }
 
   toSpec(): Record<string, unknown> {
@@ -36,8 +37,8 @@ export class GitClonePipelineTask extends PipelineTask {
         ],
       },
       params: [
-        { name: 'url', value: '$(params.git-url)' },
-        { name: 'revision', value: '$(params.git-revision)' },
+        { name: 'url', value: `$(params.${PARAM_GIT_URL})` },
+        { name: 'revision', value: `$(params.${PARAM_GIT_REVISION})` },
       ],
       workspaces: [{ name: 'output', workspace: this.workspace }],
     });

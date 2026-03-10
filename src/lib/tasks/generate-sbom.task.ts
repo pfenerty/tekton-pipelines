@@ -1,6 +1,8 @@
 import { Construct } from 'constructs';
 import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
 import { PipelineTask } from './pipeline-task';
+import { WS_WORKSPACE, PARAM_APP_ROOT, DEFAULT_OUTPUT_FORMAT } from '../constants';
+import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
  * Tekton Task that generates a Software Bill of Materials using Syft.
@@ -29,7 +31,7 @@ export class GenerateSbomTask extends TektonTaskConstruct {
           name: 'output-format',
           description: 'SBOM output format',
           type: 'string',
-          default: 'cyclonedx-json',
+          default: DEFAULT_OUTPUT_FORMAT,
         },
       ],
       steps: [
@@ -39,12 +41,12 @@ export class GenerateSbomTask extends TektonTaskConstruct {
           workingDir: '/tmp',
           args: [
             '$(params.scan-target)',
-            '-o $(params.output-format)=$(workspaces.workspace.path)/sbom',
+            `-o $(params.output-format)=$(workspaces.${WS_WORKSPACE}.path)/sbom`,
             '-o table',
           ],
         },
       ],
-      workspaces: [{ name: 'workspace' }],
+      workspaces: [{ name: WS_WORKSPACE }],
     };
   }
 }
@@ -69,10 +71,10 @@ export class GenerateSbomPipelineTask extends PipelineTask {
       params: [
         {
           name: 'scan-target',
-          value: '$(workspaces.workspace.path)/$(params.app-root)',
+          value: `$(workspaces.${WS_WORKSPACE}.path)/$(params.${PARAM_APP_ROOT})`,
         },
       ],
-      workspaces: [{ name: 'workspace', workspace: 'workspace' }],
+      workspaces: [WORKSPACE_BINDING],
     });
   }
 }

@@ -1,4 +1,6 @@
 import { PipelineTask } from './pipeline-task';
+import { PARAM_IMAGE_NAME } from '../constants';
+import { GIT_SOURCE_BINDING, DOCKERCONFIG_BINDING } from '../workspaces';
 
 /**
  * Pipeline task step that runs the external ko-build Task.
@@ -19,13 +21,10 @@ export class KoBuildPipelineTask extends PipelineTask {
       name: this.name,
       taskRef: { kind: 'Task', name: 'ko-build' },
       params: [
-        { name: 'docker-repo', value: '$(params.image-name)' },
+        { name: 'docker-repo', value: `$(params.${PARAM_IMAGE_NAME})` },
         { name: 'path-to-app-root', value: 'app' },
       ],
-      workspaces: [
-        { name: 'source', workspace: 'git-source' },
-        { name: 'dockerconfig', workspace: 'dockerconfig' },
-      ],
+      workspaces: [GIT_SOURCE_BINDING, DOCKERCONFIG_BINDING],
     });
   }
 }
