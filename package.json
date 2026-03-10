@@ -20,6 +20,8 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "synth": "npx cdk8s synth",
     "import": "npx cdk8s import",
     "prepublishOnly": "npm run build"
@@ -35,6 +37,7 @@
     "cdk8s-cli": "^2.198.0",
     "constructs": "^10.3.0",
     "ts-node": "^10.9.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
   }
 }
