@@ -6,7 +6,7 @@ import { GOLANG_VERSION_PARAM_SPEC, GOLANG_VARIANT_PARAM_SPEC } from '../params'
 import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
- * Tekton Task that runs `go test` against a checked-out workspace.
+ * Tekton Task that runs `go test ./...` against a checked-out workspace.
  *
  * Params exposed at runtime:
  *   build-path     - directory to run tests in (default: ./)
@@ -37,7 +37,7 @@ export class GoTestTask extends TektonTaskConstruct {
           name: 'test',
           image: `golang:$(params.${PARAM_GOLANG_VERSION})-$(params.${PARAM_GOLANG_VARIANT})`,
           workingDir: `$(workspaces.${WS_WORKSPACE}.path)/$(params.${PARAM_BUILD_PATH})`,
-          command: ['go', 'test'],
+          command: ['go', 'test', './...'],
         },
       ],
       workspaces: [{ name: WS_WORKSPACE }],
@@ -51,10 +51,14 @@ export class GoTestTask extends TektonTaskConstruct {
  * Consumes pipeline params: app-root, build-path, golang-version, golang-variant.
  * Binds the 'workspace' pipeline workspace.
  */
+export interface GoTestPipelineTaskOptions {
+  runAfter?: PipelineTask | PipelineTask[];
+}
+
 export class GoTestPipelineTask extends PipelineTask {
   readonly name = 'test';
 
-  constructor(opts: { runAfter?: PipelineTask | PipelineTask[] } = {}) {
+  constructor(opts: GoTestPipelineTaskOptions = {}) {
     super(opts.runAfter ?? []);
   }
 

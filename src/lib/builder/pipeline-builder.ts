@@ -10,12 +10,27 @@ import { TEKTON_API_V1 } from '../constants';
  * Construction is deferred until PipelineBuilder.build() is called, which allows
  * the builder to manage the dependency graph without mutating tasks after creation.
  */
-type TaskFactory<T extends PipelineTask> = (runAfter: PipelineTask[]) => T;
+export type TaskFactory<T extends PipelineTask> = (runAfter: PipelineTask[]) => T;
 
 interface TaskNode {
   key: string;
   factory: TaskFactory<PipelineTask>;
   dependsOn: string[];
+}
+
+/** Typed param spec for pipeline-level param declarations. */
+export interface PipelineParamSpec {
+  name: string;
+  description?: string;
+  type?: 'string' | 'array' | 'object';
+  default?: string | string[];
+}
+
+/** Typed workspace declaration for pipeline-level workspace declarations. */
+export interface PipelineWorkspaceDeclaration {
+  name: string;
+  description?: string;
+  optional?: boolean;
 }
 
 export interface PipelineBuildOptions {
@@ -24,9 +39,9 @@ export interface PipelineBuildOptions {
   /** Kubernetes namespace the Pipeline will be deployed to. */
   namespace: string;
   /** Pipeline-level param specs. */
-  params?: Record<string, unknown>[];
+  params?: PipelineParamSpec[];
   /** Pipeline-level workspace declarations. */
-  workspaces?: { name: string }[];
+  workspaces?: PipelineWorkspaceDeclaration[];
 }
 
 /**

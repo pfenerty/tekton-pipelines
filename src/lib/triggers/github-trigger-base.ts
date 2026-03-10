@@ -8,6 +8,7 @@ import {
   DEFAULT_APP_ROOT,
   DEFAULT_BUILD_PATH,
   GITHUB_REPO_URL,
+  WS_WORKSPACE,
 } from '../constants';
 
 export interface GitHubTriggerBaseProps {
@@ -39,6 +40,8 @@ export interface GitHubTriggerConfig {
  * (names, CEL expression for git revision) via the config parameter.
  *
  * Expose bindingRef / templateRef to wire into an EventListener trigger entry.
+ *
+ * @internal Prefer {@link GitHubPushTrigger} or {@link GitHubPullRequestTrigger}.
  */
 export class GitHubTriggerBase extends Construct {
   public readonly bindingRef: string;
@@ -106,7 +109,7 @@ export class GitHubTriggerBase extends Construct {
               ],
               workspaces: [
                 {
-                  name: 'workspace',
+                  name: WS_WORKSPACE,
                   volumeClaimTemplate: {
                     spec: {
                       accessModes: ['ReadWriteOnce'],

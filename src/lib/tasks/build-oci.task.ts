@@ -9,10 +9,14 @@ import { GIT_SOURCE_BINDING, DOCKERCONFIG_BINDING } from '../workspaces';
  * Consumes pipeline param: image-name.
  * Binds the 'git-source' and 'dockerconfig' pipeline workspaces.
  */
+export interface BuildOciPipelineTaskOptions {
+  runAfter?: PipelineTask | PipelineTask[];
+}
+
 export class BuildOciPipelineTask extends PipelineTask {
   readonly name = 'build-image';
 
-  constructor(opts: { runAfter?: PipelineTask | PipelineTask[] } = {}) {
+  constructor(opts: BuildOciPipelineTaskOptions = {}) {
     super(opts.runAfter ?? []);
   }
 
