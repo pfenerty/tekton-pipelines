@@ -1,20 +1,43 @@
 {
-  "name": "tekton-pipelines",
+  "name": "@pfenerty/tekton-pipelines",
   "version": "1.0.0",
-  "private": true,
+  "description": "CDK8s constructs for composing Tekton pipelines as code",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "dist/**/*.js.map",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "synth": "npx cdk8s synth",
-    "import": "npx cdk8s import"
+    "import": "npx cdk8s import",
+    "prepublishOnly": "npm run build"
   },
-  "dependencies": {
-    "cdk8s": "^2.68.0",
-    "constructs": "^10.3.0"
+  "peerDependencies": {
+    "cdk8s": ">=2.0.0",
+    "constructs": ">=10.0.0"
   },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "cdk8s": "^2.68.0",
     "cdk8s-cli": "^2.198.0",
+    "constructs": "^10.3.0",
     "ts-node": "^10.9.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
   }
 }

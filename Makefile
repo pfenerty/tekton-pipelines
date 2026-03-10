@@ -4,7 +4,7 @@
 install:
 	npm install
 
-## Synthesize Kubernetes manifests into dist/
+## Synthesize Kubernetes manifests into synth-output/
 synth:
 	npm run synth
 
@@ -12,12 +12,12 @@ synth:
 ## Requires: kubectl configured, Tekton installed in $(NAMESPACE)
 NAMESPACE ?= tekton-builds
 diff: synth
-	kubectl diff -f dist/ --namespace=$(NAMESPACE)
+	kubectl diff -f synth-output/ --namespace=$(NAMESPACE)
 
 ## Apply all synthesized manifests to the cluster
 apply: synth
-	kubectl apply -f dist/
+	kubectl apply -f synth-output/
 
-## Remove synthesized manifests
+## Remove synthesized manifests and compiled output
 clean:
-	rm -rf dist/
+	rm -rf synth-output/ dist/
