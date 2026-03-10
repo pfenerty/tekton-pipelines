@@ -1,19 +1,7 @@
 import { Construct } from 'constructs';
-import { ApiObject } from 'cdk8s';
+import { GitHubTriggerBase, GitHubTriggerBaseProps } from './github-trigger-base';
 
-export interface GitHubPullRequestTriggerProps {
-  namespace: string;
-  /** Name of the Pipeline to run on pull_request events. */
-  pipelineRef: string;
-  /** Default value for app-root param passed to the PipelineRun (default: 'src'). */
-  appRoot?: string;
-  /** Default value for build-path param passed to the PipelineRun (default: 'cmd'). */
-  buildPath?: string;
-  /** Size of the PVC created per PipelineRun (default: '1Gi'). */
-  workspaceStorageSize?: string;
-  /** ServiceAccount used to run PipelineRuns (default: 'tekton-triggers'). */
-  serviceAccountName?: string;
-}
+export type GitHubPullRequestTriggerProps = GitHubTriggerBaseProps;
 
 /**
  * Composes a TriggerBinding and TriggerTemplate for GitHub pull_request events.
@@ -28,85 +16,13 @@ export interface GitHubPullRequestTriggerProps {
  *
  * Expose bindingRef / templateRef to wire into an EventListener trigger entry.
  */
-export class GitHubPullRequestTrigger extends Construct {
-  public readonly bindingRef: string;
-  public readonly templateRef: string;
-
+export class GitHubPullRequestTrigger extends GitHubTriggerBase {
   constructor(scope: Construct, id: string, props: GitHubPullRequestTriggerProps) {
-    super(scope, id);
-
-    this.bindingRef = 'github-pull-request';
-    this.templateRef = 'github-pull-request-trigger-template';
-
-    const serviceAccountName = props.serviceAccountName ?? 'tekton-triggers';
-    const workspaceStorage = props.workspaceStorageSize ?? '1Gi';
-    const appRoot = props.appRoot ?? 'src';
-    const buildPath = props.buildPath ?? 'cmd';
-
-    new ApiObject(this, 'binding', {
-      apiVersion: 'triggers.tekton.dev/v1beta1',
-      kind: 'TriggerBinding',
-      metadata: {
-        name: this.bindingRef,
-        namespace: props.namespace,
-      },
-      spec: {
-        params: [
-          { name: 'gitrevision', value: '$(body.pull_request.head.sha)' },
-          { name: 'namespace', value: props.namespace },
-          { name: 'gitrepositoryurl', value: 'https://github.com/$(body.repository.full_name)' },
-          { name: 'projectname', value: '$(body.repository.name)' },
-        ],
-      },
-    });
-
-    new ApiObject(this, 'template', {
-      apiVersion: 'triggers.tekton.dev/v1beta1',
-      kind: 'TriggerTemplate',
-      metadata: {
-        name: this.templateRef,
-        namespace: props.namespace,
-      },
-      spec: {
-        params: [
-          { name: 'gitrevision', description: 'The git revision' },
-          { name: 'gitrepositoryurl', description: 'The git repository url' },
-          { name: 'namespace', description: 'The namespace to create the resources' },
-          { name: 'projectname', description: 'name of the project' },
-        ],
-        resourcetemplates: [
-          {
-            apiVersion: 'tekton.dev/v1beta1',
-            kind: 'PipelineRun',
-            metadata: {
-              generateName: 'github-pull-request-pipeline-run-',
-              namespace: '$(tt.params.namespace)',
-            },
-            spec: {
-              pipelineRef: { name: props.pipelineRef },
-              serviceAccountName,
-              params: [
-                { name: 'git-revision', value: '$(tt.params.gitrevision)' },
-                { name: 'git-url', value: '$(tt.params.gitrepositoryurl)' },
-                { name: 'project-name', value: '$(tt.params.projectname)' },
-                { name: 'app-root', value: appRoot },
-                { name: 'build-path', value: buildPath },
-              ],
-              workspaces: [
-                {
-                  name: 'workspace',
-                  volumeClaimTemplate: {
-                    spec: {
-                      accessModes: ['ReadWriteOnce'],
-                      resources: { requests: { storage: workspaceStorage } },
-                    },
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      },
+    super(scope, id, props, {
+      bindingName: 'github-pull-request',
+      templateName: 'github-pull-request-trigger-template',
+      pipelineRunGenerateName: 'github-pull-request-pipeline-run-',
+      gitRevisionValue: '$(body.pull_request.head.sha)',
     });
   }
 }

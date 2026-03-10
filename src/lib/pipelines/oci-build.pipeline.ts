@@ -5,6 +5,14 @@ import { GitClonePipelineTask } from '../tasks/git-clone.task';
 import { BuildOciPipelineTask } from '../tasks/build-oci.task';
 import { GenerateImageSbomPipelineTask } from '../tasks/generate-image-sbom.task';
 import { CosignSignImagePipelineTask } from '../tasks/cosign-sign-image.task';
+import {
+  TEKTON_API_V1,
+  WS_GIT_SOURCE,
+  WS_DOCKERCONFIG,
+  PARAM_GIT_URL,
+  PARAM_GIT_REVISION,
+  PARAM_IMAGE_NAME,
+} from '../constants';
 
 export interface OciBuildPipelineProps {
   namespace: string;
@@ -41,13 +49,13 @@ export class OciBuildPipeline extends Construct {
     this.pipelineName = props.name ?? 'oci-build';
 
     const fixPerms = new FixFilePermsPipelineTask();
-    const clone = new GitClonePipelineTask({ name: 'fetch-from-git', workspace: 'git-source', runAfter: fixPerms });
+    const clone = new GitClonePipelineTask({ name: 'fetch-from-git', workspace: WS_GIT_SOURCE, runAfter: fixPerms });
     const buildImage = new BuildOciPipelineTask({ runAfter: clone });
     const sbom = new GenerateImageSbomPipelineTask({ buildStep: buildImage, runAfter: buildImage });
     const sign = new CosignSignImagePipelineTask({ buildStep: buildImage, runAfter: sbom });
 
     new ApiObject(this, 'resource', {
-      apiVersion: 'tekton.dev/v1',
+      apiVersion: TEKTON_API_V1,
       kind: 'Pipeline',
       metadata: {
         name: this.pipelineName,
@@ -55,13 +63,13 @@ export class OciBuildPipeline extends Construct {
       },
       spec: {
         params: [
-          { name: 'git-url', type: 'string' },
-          { name: 'git-revision', type: 'string' },
-          { name: 'image-name', type: 'string' },
+          { name: PARAM_GIT_URL, type: 'string' },
+          { name: PARAM_GIT_REVISION, type: 'string' },
+          { name: PARAM_IMAGE_NAME, type: 'string' },
         ],
         workspaces: [
-          { name: 'git-source' },
-          { name: 'dockerconfig' },
+          { name: WS_GIT_SOURCE },
+          { name: WS_DOCKERCONFIG },
         ],
         tasks: [fixPerms, clone, buildImage, sbom, sign].map(t => t.toSpec()),
       },

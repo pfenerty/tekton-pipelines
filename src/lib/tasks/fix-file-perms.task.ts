@@ -1,4 +1,5 @@
 import { PipelineTask } from './pipeline-task';
+import { WS_GIT_SOURCE } from '../constants';
 
 /**
  * Pipeline task step that runs the external fix-file-perms Task.
@@ -12,16 +13,14 @@ export class FixFilePermsPipelineTask extends PipelineTask {
 
   constructor(opts: { sourceWorkspace?: string; runAfter?: PipelineTask | PipelineTask[] } = {}) {
     super(opts.runAfter ?? []);
-    this.sourceWorkspace = opts.sourceWorkspace ?? 'git-source';
+    this.sourceWorkspace = opts.sourceWorkspace ?? WS_GIT_SOURCE;
   }
 
   toSpec(): Record<string, unknown> {
-    const spec: Record<string, unknown> = {
+    return this.buildSpec({
       name: this.name,
       taskRef: { kind: 'Task', name: 'fix-file-perms' },
       workspaces: [{ name: 'source', workspace: this.sourceWorkspace }],
-    };
-    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
-    return spec;
+    });
   }
 }

@@ -1,10 +1,7 @@
 import { Construct } from 'constructs';
-import { ApiObject } from 'cdk8s';
-
-export interface GoBuildTaskProps {
-  namespace: string;
-  name?: string;
-}
+import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
+import { WS_WORKSPACE, PARAM_BUILD_PATH, PARAM_GOLANG_VERSION, PARAM_GOLANG_VARIANT } from '../constants';
+import { GOLANG_VERSION_PARAM_SPEC, GOLANG_VARIANT_PARAM_SPEC } from '../params';
 
 /**
  * Tekton Task that runs `go build` against a checked-out workspace.
@@ -14,53 +11,35 @@ export interface GoBuildTaskProps {
  *   golang-version - Go toolchain version (default: 1.23.0)
  *   golang-variant - base image variant, e.g. alpine (default: alpine)
  */
-export class GoBuildTask extends Construct {
+export class GoBuildTask extends TektonTaskConstruct {
   static readonly defaultName = 'build-go';
-  public readonly taskName: string;
 
-  constructor(scope: Construct, id: string, props: GoBuildTaskProps) {
-    super(scope, id);
-    this.taskName = props.name ?? GoBuildTask.defaultName;
+  constructor(scope: Construct, id: string, props: TektonTaskProps) {
+    super(scope, id, props, GoBuildTask.defaultName);
+  }
 
-    new ApiObject(this, 'resource', {
-      apiVersion: 'tekton.dev/v1',
-      kind: 'Task',
-      metadata: {
-        name: this.taskName,
-        namespace: props.namespace,
-      },
-      spec: {
-        params: [
-          {
-            name: 'build-path',
-            description: 'The build directory used by task',
-            type: 'string',
-            default: './',
-          },
-          {
-            name: 'golang-version',
-            description: 'golang version to use for the build',
-            type: 'string',
-            default: '1.23.0',
-          },
-          {
-            name: 'golang-variant',
-            description: 'golang image variant to use for the build',
-            type: 'string',
-            default: 'alpine',
-          },
-        ],
-        steps: [
-          {
-            name: 'build',
-            image: 'golang:$(params.golang-version)-$(params.golang-variant)',
-            workingDir: '/go',
-            command: ['go', 'build'],
-            args: ['-C=$(workspaces.workspace.path)/$(params.build-path)'],
-          },
-        ],
-        workspaces: [{ name: 'workspace' }],
-      },
-    });
+  protected buildTaskSpec(): Record<string, unknown> {
+    return {
+      params: [
+        {
+          name: PARAM_BUILD_PATH,
+          description: 'The build directory used by task',
+          type: 'string',
+          default: './',
+        },
+        GOLANG_VERSION_PARAM_SPEC,
+        GOLANG_VARIANT_PARAM_SPEC,
+      ],
+      steps: [
+        {
+          name: 'build',
+          image: `golang:$(params.${PARAM_GOLANG_VERSION})-$(params.${PARAM_GOLANG_VARIANT})`,
+          workingDir: '/go',
+          command: ['go', 'build'],
+          args: [`-C=$(workspaces.${WS_WORKSPACE}.path)/$(params.${PARAM_BUILD_PATH})`],
+        },
+      ],
+      workspaces: [{ name: WS_WORKSPACE }],
+    };
   }
 }

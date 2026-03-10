@@ -1,10 +1,8 @@
 import { Construct } from 'constructs';
-import { ApiObject } from 'cdk8s';
-
-export interface VulnScanTaskProps {
-  namespace: string;
-  name?: string;
-}
+import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
+import { PipelineTask } from './pipeline-task';
+import { WS_WORKSPACE, DEFAULT_OUTPUT_FORMAT } from '../constants';
+import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
  * Tekton Task that scans a SBOM for vulnerabilities using Grype.
@@ -14,54 +12,44 @@ export interface VulnScanTaskProps {
  *   sbom-path     - path to the SBOM file to scan
  *   output-format - report format (default: cyclonedx-json)
  */
-export class VulnScanTask extends Construct {
+export class VulnScanTask extends TektonTaskConstruct {
   static readonly defaultName = 'vulnerability-scan';
-  public readonly taskName: string;
 
-  constructor(scope: Construct, id: string, props: VulnScanTaskProps) {
-    super(scope, id);
-    this.taskName = props.name ?? VulnScanTask.defaultName;
+  constructor(scope: Construct, id: string, props: TektonTaskProps) {
+    super(scope, id, props, VulnScanTask.defaultName);
+  }
 
-    new ApiObject(this, 'resource', {
-      apiVersion: 'tekton.dev/v1',
-      kind: 'Task',
-      metadata: {
-        name: this.taskName,
-        namespace: props.namespace,
-      },
-      spec: {
-        params: [
-          {
-            name: 'sbom-path',
-            description: 'Path to the sbom to scan',
-            type: 'string',
-          },
-          {
-            name: 'output-format',
-            description: 'Vulnerability report format',
-            type: 'string',
-            default: 'cyclonedx-json',
-          },
-        ],
-        steps: [
-          {
-            name: 'vulnerability-scan',
-            image: 'anchore/grype:v0.79.6-debug',
-            workingDir: '/tmp',
-            args: [
-              'sbom:$(params.sbom-path)',
-              '-o $(params.output-format)=$(workspaces.workspace.path)/vulns',
-              '-o table',
-            ],
-          },
-        ],
-        workspaces: [{ name: 'workspace' }],
-      },
-    });
+  protected buildTaskSpec(): Record<string, unknown> {
+    return {
+      params: [
+        {
+          name: 'sbom-path',
+          description: 'Path to the sbom to scan',
+          type: 'string',
+        },
+        {
+          name: 'output-format',
+          description: 'Vulnerability report format',
+          type: 'string',
+          default: DEFAULT_OUTPUT_FORMAT,
+        },
+      ],
+      steps: [
+        {
+          name: 'vulnerability-scan',
+          image: 'anchore/grype:v0.79.6-debug',
+          workingDir: '/tmp',
+          args: [
+            'sbom:$(params.sbom-path)',
+            `-o $(params.output-format)=$(workspaces.${WS_WORKSPACE}.path)/vulns`,
+            '-o table',
+          ],
+        },
+      ],
+      workspaces: [{ name: WS_WORKSPACE }],
+    };
   }
 }
-
-import { PipelineTask } from './pipeline-task';
 
 /**
  * Pipeline task step that runs the vulnerability-scan Task against a SBOM.
@@ -77,15 +65,13 @@ export class VulnScanPipelineTask extends PipelineTask {
   }
 
   toSpec(): Record<string, unknown> {
-    const spec: Record<string, unknown> = {
+    return this.buildSpec({
       name: this.name,
       taskRef: { kind: 'Task', name: VulnScanTask.defaultName },
       params: [
-        { name: 'sbom-path', value: '$(workspaces.workspace.path)/sbom' },
+        { name: 'sbom-path', value: `$(workspaces.${WS_WORKSPACE}.path)/sbom` },
       ],
-      workspaces: [{ name: 'workspace', workspace: 'workspace' }],
-    };
-    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
-    return spec;
+      workspaces: [WORKSPACE_BINDING],
+    });
   }
 }

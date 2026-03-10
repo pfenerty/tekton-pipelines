@@ -3,6 +3,14 @@ import { ApiObject } from 'cdk8s';
 import { FixFilePermsPipelineTask } from '../tasks/fix-file-perms.task';
 import { GitClonePipelineTask } from '../tasks/git-clone.task';
 import { KoBuildPipelineTask } from '../tasks/ko-build.task';
+import {
+  TEKTON_API_V1,
+  WS_GIT_SOURCE,
+  WS_DOCKERCONFIG,
+  PARAM_GIT_URL,
+  PARAM_GIT_REVISION,
+  PARAM_IMAGE_NAME,
+} from '../constants';
 
 export interface ContainerImageBuildPipelineProps {
   namespace: string;
@@ -34,11 +42,11 @@ export class ContainerImageBuildPipeline extends Construct {
     this.pipelineName = props.name ?? 'container-image-build';
 
     const fixPerms = new FixFilePermsPipelineTask();
-    const clone = new GitClonePipelineTask({ workspace: 'git-source', runAfter: fixPerms });
+    const clone = new GitClonePipelineTask({ workspace: WS_GIT_SOURCE, runAfter: fixPerms });
     const build = new KoBuildPipelineTask({ runAfter: clone });
 
     new ApiObject(this, 'resource', {
-      apiVersion: 'tekton.dev/v1',
+      apiVersion: TEKTON_API_V1,
       kind: 'Pipeline',
       metadata: {
         name: this.pipelineName,
@@ -46,13 +54,13 @@ export class ContainerImageBuildPipeline extends Construct {
       },
       spec: {
         params: [
-          { name: 'git-url', type: 'string' },
-          { name: 'git-revision', type: 'string' },
-          { name: 'image-name', type: 'string' },
+          { name: PARAM_GIT_URL, type: 'string' },
+          { name: PARAM_GIT_REVISION, type: 'string' },
+          { name: PARAM_IMAGE_NAME, type: 'string' },
         ],
         workspaces: [
-          { name: 'git-source' },
-          { name: 'dockerconfig' },
+          { name: WS_GIT_SOURCE },
+          { name: WS_DOCKERCONFIG },
         ],
         tasks: [fixPerms, clone, build].map(t => t.toSpec()),
       },

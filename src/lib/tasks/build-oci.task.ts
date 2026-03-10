@@ -1,4 +1,6 @@
 import { PipelineTask } from './pipeline-task';
+import { PARAM_IMAGE_NAME } from '../constants';
+import { GIT_SOURCE_BINDING, DOCKERCONFIG_BINDING } from '../workspaces';
 
 /**
  * Pipeline task step that runs the external build-oci Task.
@@ -15,18 +17,13 @@ export class BuildOciPipelineTask extends PipelineTask {
   }
 
   toSpec(): Record<string, unknown> {
-    const spec: Record<string, unknown> = {
+    return this.buildSpec({
       name: this.name,
       taskRef: { kind: 'Task', name: 'build-oci' },
       params: [
-        { name: 'image-name', value: '$(params.image-name)' },
+        { name: PARAM_IMAGE_NAME, value: `$(params.${PARAM_IMAGE_NAME})` },
       ],
-      workspaces: [
-        { name: 'source', workspace: 'git-source' },
-        { name: 'dockerconfig', workspace: 'dockerconfig' },
-      ],
-    };
-    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
-    return spec;
+      workspaces: [GIT_SOURCE_BINDING, DOCKERCONFIG_BINDING],
+    });
   }
 }

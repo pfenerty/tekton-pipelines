@@ -1,10 +1,8 @@
 import { Construct } from 'constructs';
-import { ApiObject } from 'cdk8s';
-
-export interface GenerateSbomTaskProps {
-  namespace: string;
-  name?: string;
-}
+import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
+import { PipelineTask } from './pipeline-task';
+import { WS_WORKSPACE, PARAM_APP_ROOT, DEFAULT_OUTPUT_FORMAT } from '../constants';
+import { WORKSPACE_BINDING } from '../workspaces';
 
 /**
  * Tekton Task that generates a Software Bill of Materials using Syft.
@@ -14,54 +12,44 @@ export interface GenerateSbomTaskProps {
  *   scan-target   - image reference or directory path to scan
  *   output-format - SBOM format (default: cyclonedx-json)
  */
-export class GenerateSbomTask extends Construct {
+export class GenerateSbomTask extends TektonTaskConstruct {
   static readonly defaultName = 'generate-sbom';
-  public readonly taskName: string;
 
-  constructor(scope: Construct, id: string, props: GenerateSbomTaskProps) {
-    super(scope, id);
-    this.taskName = props.name ?? GenerateSbomTask.defaultName;
+  constructor(scope: Construct, id: string, props: TektonTaskProps) {
+    super(scope, id, props, GenerateSbomTask.defaultName);
+  }
 
-    new ApiObject(this, 'resource', {
-      apiVersion: 'tekton.dev/v1',
-      kind: 'Task',
-      metadata: {
-        name: this.taskName,
-        namespace: props.namespace,
-      },
-      spec: {
-        params: [
-          {
-            name: 'scan-target',
-            description: 'Name (reference) of the image or path to scan',
-            type: 'string',
-          },
-          {
-            name: 'output-format',
-            description: 'SBOM output format',
-            type: 'string',
-            default: 'cyclonedx-json',
-          },
-        ],
-        steps: [
-          {
-            name: 'generate-sbom',
-            image: 'anchore/syft:v1.11.0-debug',
-            workingDir: '/tmp',
-            args: [
-              '$(params.scan-target)',
-              '-o $(params.output-format)=$(workspaces.workspace.path)/sbom',
-              '-o table',
-            ],
-          },
-        ],
-        workspaces: [{ name: 'workspace' }],
-      },
-    });
+  protected buildTaskSpec(): Record<string, unknown> {
+    return {
+      params: [
+        {
+          name: 'scan-target',
+          description: 'Name (reference) of the image or path to scan',
+          type: 'string',
+        },
+        {
+          name: 'output-format',
+          description: 'SBOM output format',
+          type: 'string',
+          default: DEFAULT_OUTPUT_FORMAT,
+        },
+      ],
+      steps: [
+        {
+          name: 'generate-sbom',
+          image: 'anchore/syft:v1.11.0-debug',
+          workingDir: '/tmp',
+          args: [
+            '$(params.scan-target)',
+            `-o $(params.output-format)=$(workspaces.${WS_WORKSPACE}.path)/sbom`,
+            '-o table',
+          ],
+        },
+      ],
+      workspaces: [{ name: WS_WORKSPACE }],
+    };
   }
 }
-
-import { PipelineTask } from './pipeline-task';
 
 /**
  * Pipeline task step that runs the generate-sbom Task against source code.
@@ -77,18 +65,16 @@ export class GenerateSbomPipelineTask extends PipelineTask {
   }
 
   toSpec(): Record<string, unknown> {
-    const spec: Record<string, unknown> = {
+    return this.buildSpec({
       name: this.name,
       taskRef: { kind: 'Task', name: GenerateSbomTask.defaultName },
       params: [
         {
           name: 'scan-target',
-          value: '$(workspaces.workspace.path)/$(params.app-root)',
+          value: `$(workspaces.${WS_WORKSPACE}.path)/$(params.${PARAM_APP_ROOT})`,
         },
       ],
-      workspaces: [{ name: 'workspace', workspace: 'workspace' }],
-    };
-    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
-    return spec;
+      workspaces: [WORKSPACE_BINDING],
+    });
   }
 }

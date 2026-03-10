@@ -17,5 +17,10 @@ export abstract class PipelineTask {
     return this.runAfter.map(t => t.name);
   }
 
+  protected buildSpec(spec: Record<string, unknown>): Record<string, unknown> {
+    if (this.runAfter.length > 0) spec.runAfter = this.runAfterNames();
+    return spec;
+  }
+
   abstract toSpec(): Record<string, unknown>;
 }

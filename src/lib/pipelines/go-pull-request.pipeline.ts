@@ -4,6 +4,16 @@ import { GitClonePipelineTask } from '../tasks/git-clone.task';
 import { GoTestPipelineTask } from '../tasks/go-test.task';
 import { GenerateSbomPipelineTask } from '../tasks/generate-sbom.task';
 import { VulnScanPipelineTask } from '../tasks/vuln-scan.task';
+import {
+  TEKTON_API_V1,
+  WS_WORKSPACE,
+  PARAM_GIT_URL,
+  PARAM_GIT_REVISION,
+  PARAM_PROJECT_NAME,
+  PARAM_APP_ROOT,
+  PARAM_BUILD_PATH,
+} from '../constants';
+import { GOLANG_VERSION_PARAM_SPEC, GOLANG_VARIANT_PARAM_SPEC } from '../params';
 
 export interface GoPullRequestPipelineProps {
   namespace: string;
@@ -42,7 +52,7 @@ export class GoPullRequestPipeline extends Construct {
     const vuln = new VulnScanPipelineTask({ runAfter: sbom });
 
     new ApiObject(this, 'resource', {
-      apiVersion: 'tekton.dev/v1',
+      apiVersion: TEKTON_API_V1,
       kind: 'Pipeline',
       metadata: {
         name: this.pipelineName,
@@ -50,33 +60,23 @@ export class GoPullRequestPipeline extends Construct {
       },
       spec: {
         params: [
-          { name: 'git-url', type: 'string' },
-          { name: 'git-revision', type: 'string' },
-          { name: 'project-name', type: 'string' },
+          { name: PARAM_GIT_URL, type: 'string' },
+          { name: PARAM_GIT_REVISION, type: 'string' },
+          { name: PARAM_PROJECT_NAME, type: 'string' },
           {
-            name: 'app-root',
+            name: PARAM_APP_ROOT,
             description: 'path to root of the golang app (should contain go.mod, go.sum files)',
             type: 'string',
           },
           {
-            name: 'build-path',
+            name: PARAM_BUILD_PATH,
             description: 'path under app-root to target for build',
             type: 'string',
           },
-          {
-            name: 'golang-version',
-            description: 'golang version to use for the build',
-            type: 'string',
-            default: '1.23.0',
-          },
-          {
-            name: 'golang-variant',
-            description: 'golang image variant to use for the build',
-            type: 'string',
-            default: 'alpine',
-          },
+          GOLANG_VERSION_PARAM_SPEC,
+          GOLANG_VARIANT_PARAM_SPEC,
         ],
-        workspaces: [{ name: 'workspace' }],
+        workspaces: [{ name: WS_WORKSPACE }],
         tasks: [clone, test, sbom, vuln].map(t => t.toSpec()),
       },
     });
