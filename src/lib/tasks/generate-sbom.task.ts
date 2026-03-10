@@ -15,11 +15,12 @@ export interface GenerateSbomTaskProps {
  *   output-format - SBOM format (default: cyclonedx-json)
  */
 export class GenerateSbomTask extends Construct {
+  static readonly defaultName = 'generate-sbom';
   public readonly taskName: string;
 
   constructor(scope: Construct, id: string, props: GenerateSbomTaskProps) {
     super(scope, id);
-    this.taskName = props.name ?? 'generate-sbom';
+    this.taskName = props.name ?? GenerateSbomTask.defaultName;
 
     new ApiObject(this, 'resource', {
       apiVersion: 'tekton.dev/v1',

@@ -1,14 +1,17 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
+import { GoTestTask } from '../tasks/go-test.task';
+import { GenerateSbomTask } from '../tasks/generate-sbom.task';
+import { VulnScanTask } from '../tasks/vuln-scan.task';
 
 export interface GoPullRequestPipelineProps {
   namespace: string;
   name?: string;
-  /** Name of the test-go Task. Defaults to 'test-go'. */
+  /** Name of the test-go Task. Defaults to GoTestTask.defaultName. */
   testTaskName?: string;
-  /** Name of the generate-sbom Task. Defaults to 'generate-sbom'. */
+  /** Name of the generate-sbom Task. Defaults to GenerateSbomTask.defaultName. */
   sbomTaskName?: string;
-  /** Name of the vulnerability-scan Task. Defaults to 'vulnerability-scan'. */
+  /** Name of the vulnerability-scan Task. Defaults to VulnScanTask.defaultName. */
   vulnScanTaskName?: string;
 }
 
@@ -37,9 +40,9 @@ export class GoPullRequestPipeline extends Construct {
   constructor(scope: Construct, id: string, props: GoPullRequestPipelineProps) {
     super(scope, id);
     this.pipelineName = props.name ?? 'go-merge-request';
-    const testTaskName = props.testTaskName ?? 'test-go';
-    const sbomTaskName = props.sbomTaskName ?? 'generate-sbom';
-    const vulnScanTaskName = props.vulnScanTaskName ?? 'vulnerability-scan';
+    const testTaskName = props.testTaskName ?? GoTestTask.defaultName;
+    const sbomTaskName = props.sbomTaskName ?? GenerateSbomTask.defaultName;
+    const vulnScanTaskName = props.vulnScanTaskName ?? VulnScanTask.defaultName;
 
     new ApiObject(this, 'resource', {
       apiVersion: 'tekton.dev/v1',

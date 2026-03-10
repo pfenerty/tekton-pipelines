@@ -15,11 +15,12 @@ export interface VulnScanTaskProps {
  *   output-format - report format (default: cyclonedx-json)
  */
 export class VulnScanTask extends Construct {
+  static readonly defaultName = 'vulnerability-scan';
   public readonly taskName: string;
 
   constructor(scope: Construct, id: string, props: VulnScanTaskProps) {
     super(scope, id);
-    this.taskName = props.name ?? 'vulnerability-scan';
+    this.taskName = props.name ?? VulnScanTask.defaultName;
 
     new ApiObject(this, 'resource', {
       apiVersion: 'tekton.dev/v1',

@@ -1,10 +1,11 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
+import { GoTestTask } from '../tasks/go-test.task';
 
 export interface GoPushPipelineProps {
   namespace: string;
   name?: string;
-  /** Name of the test-go Task. Defaults to 'test-go'. */
+  /** Name of the test-go Task. Defaults to GoTestTask.defaultName. */
   testTaskName?: string;
 }
 
@@ -30,7 +31,7 @@ export class GoPushPipeline extends Construct {
   constructor(scope: Construct, id: string, props: GoPushPipelineProps) {
     super(scope, id);
     this.pipelineName = props.name ?? 'go-push';
-    const testTaskName = props.testTaskName ?? 'test-go';
+    const testTaskName = props.testTaskName ?? GoTestTask.defaultName;
 
     new ApiObject(this, 'resource', {
       apiVersion: 'tekton.dev/v1',

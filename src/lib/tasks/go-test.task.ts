@@ -15,11 +15,12 @@ export interface GoTestTaskProps {
  *   golang-variant - base image variant, e.g. alpine (default: alpine)
  */
 export class GoTestTask extends Construct {
+  static readonly defaultName = 'test-go';
   public readonly taskName: string;
 
   constructor(scope: Construct, id: string, props: GoTestTaskProps) {
     super(scope, id);
-    this.taskName = props.name ?? 'test-go';
+    this.taskName = props.name ?? GoTestTask.defaultName;
 
     new ApiObject(this, 'resource', {
       apiVersion: 'tekton.dev/v1',
