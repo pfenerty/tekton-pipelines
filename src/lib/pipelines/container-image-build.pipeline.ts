@@ -1,5 +1,8 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
+import { FixFilePermsPipelineTask } from '../pipeline-tasks/fix-file-perms.pipeline-task';
+import { GitClonePipelineTask } from '../pipeline-tasks/git-clone.pipeline-task';
+import { KoBuildPipelineTask } from '../pipeline-tasks/ko-build.pipeline-task';
 
 export interface ContainerImageBuildPipelineProps {
   namespace: string;
@@ -30,6 +33,10 @@ export class ContainerImageBuildPipeline extends Construct {
     super(scope, id);
     this.pipelineName = props.name ?? 'container-image-build';
 
+    const fixPerms = new FixFilePermsPipelineTask();
+    const clone = new GitClonePipelineTask({ workspace: 'git-source', runAfter: fixPerms });
+    const build = new KoBuildPipelineTask({ runAfter: clone });
+
     new ApiObject(this, 'resource', {
       apiVersion: 'tekton.dev/v1',
       kind: 'Pipeline',
@@ -47,43 +54,7 @@ export class ContainerImageBuildPipeline extends Construct {
           { name: 'git-source' },
           { name: 'dockerconfig' },
         ],
-        tasks: [
-          {
-            name: 'fix-file-perms',
-            taskRef: { kind: 'Task', name: 'fix-file-perms' },
-            workspaces: [{ name: 'source', workspace: 'git-source' }],
-          },
-          {
-            name: 'clone',
-            runAfter: ['fix-file-perms'],
-            taskRef: {
-              resolver: 'git',
-              params: [
-                { name: 'url', value: 'https://github.com/tektoncd/catalog.git' },
-                { name: 'pathInRepo', value: '/task/git-clone/0.9/git-clone.yaml' },
-                { name: 'revision', value: 'main' },
-              ],
-            },
-            params: [
-              { name: 'url', value: '$(params.git-url)' },
-              { name: 'revision', value: '$(params.git-revision)' },
-            ],
-            workspaces: [{ name: 'output', workspace: 'git-source' }],
-          },
-          {
-            name: 'build',
-            runAfter: ['clone'],
-            taskRef: { kind: 'Task', name: 'ko-build' },
-            params: [
-              { name: 'docker-repo', value: '$(params.image-name)' },
-              { name: 'path-to-app-root', value: 'app' },
-            ],
-            workspaces: [
-              { name: 'source', workspace: 'git-source' },
-              { name: 'dockerconfig', workspace: 'dockerconfig' },
-            ],
-          },
-        ],
+        tasks: [fixPerms, clone, build].map(t => t.toSpec()),
       },
     });
   }

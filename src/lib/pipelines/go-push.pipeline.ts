@@ -1,12 +1,11 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
-import { GoTestTask } from '../tasks/go-test.task';
+import { GitClonePipelineTask } from '../pipeline-tasks/git-clone.pipeline-task';
+import { GoTestPipelineTask } from '../pipeline-tasks/go-test.pipeline-task';
 
 export interface GoPushPipelineProps {
   namespace: string;
   name?: string;
-  /** Name of the test-go Task. Defaults to GoTestTask.defaultName. */
-  testTaskName?: string;
 }
 
 /**
@@ -14,7 +13,7 @@ export interface GoPushPipelineProps {
  *
  * Tasks:
  *   clone  - git-clone (Tekton catalog resolver)
- *   test   - test-go task
+ *   test   - go-test task
  *
  * Params exposed at runtime:
  *   git-url        - repository URL
@@ -31,7 +30,9 @@ export class GoPushPipeline extends Construct {
   constructor(scope: Construct, id: string, props: GoPushPipelineProps) {
     super(scope, id);
     this.pipelineName = props.name ?? 'go-push';
-    const testTaskName = props.testTaskName ?? GoTestTask.defaultName;
+
+    const clone = new GitClonePipelineTask();
+    const test = new GoTestPipelineTask({ runAfter: clone });
 
     new ApiObject(this, 'resource', {
       apiVersion: 'tekton.dev/v1',
@@ -69,35 +70,7 @@ export class GoPushPipeline extends Construct {
           },
         ],
         workspaces: [{ name: 'workspace' }],
-        tasks: [
-          {
-            name: 'clone',
-            taskRef: {
-              resolver: 'git',
-              params: [
-                { name: 'url', value: 'https://github.com/tektoncd/catalog.git' },
-                { name: 'pathInRepo', value: '/task/git-clone/0.9/git-clone.yaml' },
-                { name: 'revision', value: 'main' },
-              ],
-            },
-            params: [
-              { name: 'url', value: '$(params.git-url)' },
-              { name: 'revision', value: '$(params.git-revision)' },
-            ],
-            workspaces: [{ name: 'output', workspace: 'workspace' }],
-          },
-          {
-            name: 'test',
-            runAfter: ['clone'],
-            taskRef: { kind: 'Task', name: testTaskName },
-            params: [
-              { name: 'build-path', value: '$(params.app-root)/$(params.build-path)' },
-              { name: 'golang-version', value: '$(params.golang-version)' },
-              { name: 'golang-variant', value: '$(params.golang-variant)' },
-            ],
-            workspaces: [{ name: 'workspace', workspace: 'workspace' }],
-          },
-        ],
+        tasks: [clone, test].map(t => t.toSpec()),
       },
     });
   }
