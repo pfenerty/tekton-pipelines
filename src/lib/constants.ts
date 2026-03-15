@@ -41,3 +41,4 @@ export const GITHUB_REPO_URL = 'https://github.com/$(body.repository.full_name)'
 // Pinned tool image versions
 export const SYFT_IMAGE = 'anchore/syft:v1.11.0-debug';
 export const GRYPE_IMAGE = 'anchore/grype:v0.79.6-debug';
+export const CHAINGUARD_GIT_IMAGE = 'cgr.dev/chainguard/git:latest';
