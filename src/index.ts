@@ -13,6 +13,8 @@ export { GenerateSbomTask, GenerateSbomPipelineTask } from './lib/tasks/generate
 export type { GenerateSbomPipelineTaskOptions } from './lib/tasks/generate-sbom.task';
 export { VulnScanTask, VulnScanPipelineTask } from './lib/tasks/vuln-scan.task';
 export type { VulnScanPipelineTaskOptions } from './lib/tasks/vuln-scan.task';
+export { GitLogTask, GitLogPipelineTask } from './lib/tasks/git-log.task';
+export type { GitLogPipelineTaskOptions } from './lib/tasks/git-log.task';
 
 // ─── Task constructs (external refs — PipelineTask only) ─────────────────────
 export { GitClonePipelineTask } from './lib/tasks/git-clone.task';
