@@ -2,6 +2,10 @@ import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
 import { PipelineTask } from '../tasks/pipeline-task';
 import { TEKTON_API_V1 } from '../constants';
+import { PipelineParamSpec, PipelineWorkspaceDeclaration } from '../../types';
+
+// Re-export shared types for backward compatibility
+export type { PipelineParamSpec, PipelineWorkspaceDeclaration } from '../../types';
 
 /**
  * A factory function that receives the already-constructed runAfter PipelineTask
@@ -16,21 +20,6 @@ interface TaskNode {
   key: string;
   factory: TaskFactory<PipelineTask>;
   dependsOn: string[];
-}
-
-/** Typed param spec for pipeline-level param declarations. */
-export interface PipelineParamSpec {
-  name: string;
-  description?: string;
-  type?: 'string' | 'array' | 'object';
-  default?: string | string[];
-}
-
-/** Typed workspace declaration for pipeline-level workspace declarations. */
-export interface PipelineWorkspaceDeclaration {
-  name: string;
-  description?: string;
-  optional?: boolean;
 }
 
 export interface PipelineBuildOptions {

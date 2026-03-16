@@ -1,10 +1,21 @@
-// ─── Base classes ─────────────────────────────────────────────────────────────
+// ─── Core API (Job/Pipeline DSL) ─────────────────────────────────────────────
+export { Job } from './lib/core/job';
+export type { JobOptions } from './lib/core/job';
+export { JOBS } from './lib/core/jobs';
+export { Pipeline } from './lib/core/pipeline';
+export type { PipelineOptions } from './lib/core/pipeline';
+export { TektonProject } from './lib/core/tekton-project';
+export type { TektonProjectOptions } from './lib/core/tekton-project';
+export { TRIGGER_EVENTS } from './lib/core/trigger-events';
+
+// ─── Task Library ────────────────────────────────────────────────────────────
+//   Base classes
 export { PipelineTask } from './lib/tasks/pipeline-task';
 export { TektonTaskConstruct } from './lib/tasks/tekton-task-construct';
 export type { TektonTaskProps } from './lib/tasks/tekton-task-construct';
 export { ImageDependentPipelineTask } from './lib/tasks/image-dependent-pipeline-task';
 
-// ─── Task constructs (inline — Task resource + PipelineTask reference) ────────
+//   Inline tasks (Task resource + PipelineTask reference)
 export { GoTestTask, GoTestPipelineTask } from './lib/tasks/go-test.task';
 export type { GoTestPipelineTaskOptions } from './lib/tasks/go-test.task';
 export { GoBuildTask, GoBuildPipelineTask } from './lib/tasks/go-build.task';
@@ -16,7 +27,7 @@ export type { VulnScanPipelineTaskOptions } from './lib/tasks/vuln-scan.task';
 export { GitLogTask, GitLogPipelineTask } from './lib/tasks/git-log.task';
 export type { GitLogPipelineTaskOptions } from './lib/tasks/git-log.task';
 
-// ─── Task constructs (external refs — PipelineTask only) ─────────────────────
+//   External-ref tasks (PipelineTask only)
 export { GitCloneTask, GitClonePipelineTask } from './lib/tasks/git-clone.task';
 export type { GitClonePipelineTaskOptions } from './lib/tasks/git-clone.task';
 export { KoBuildPipelineTask } from './lib/tasks/ko-build.task';
@@ -28,17 +39,7 @@ export type { FixFilePermsPipelineTaskOptions } from './lib/tasks/fix-file-perms
 export { GenerateImageSbomPipelineTask } from './lib/tasks/generate-image-sbom.task';
 export { CosignSignImagePipelineTask } from './lib/tasks/cosign-sign-image.task';
 
-// ─── Pre-built pipelines ──────────────────────────────────────────────────────
-export { GoPushPipeline } from './lib/pipelines/go-push.pipeline';
-export type { GoPushPipelineProps } from './lib/pipelines/go-push.pipeline';
-export { GoPullRequestPipeline } from './lib/pipelines/go-pull-request.pipeline';
-export type { GoPullRequestPipelineProps } from './lib/pipelines/go-pull-request.pipeline';
-export { ContainerImageBuildPipeline } from './lib/pipelines/container-image-build.pipeline';
-export type { ContainerImageBuildPipelineProps } from './lib/pipelines/container-image-build.pipeline';
-export { OciBuildPipeline } from './lib/pipelines/oci-build.pipeline';
-export type { OciBuildPipelineProps } from './lib/pipelines/oci-build.pipeline';
-
-// ─── Pipeline builder ─────────────────────────────────────────────────────────
+// ─── Pipeline Builder (advanced) ────────────────────────────────────────────
 export { PipelineBuilder } from './lib/builder/pipeline-builder';
 export type {
   PipelineBuildOptions,
@@ -47,18 +48,23 @@ export type {
   TaskFactory,
 } from './lib/builder/pipeline-builder';
 
-// ─── Trigger infrastructure ───────────────────────────────────────────────────
+// ─── Triggers ────────────────────────────────────────────────────────────────
 export { GitHubTriggerBase } from './lib/triggers/github-trigger-base';
 export type { GitHubTriggerBaseProps, GitHubTriggerConfig } from './lib/triggers/github-trigger-base';
 export { GitHubPushTrigger } from './lib/triggers/github-push.trigger';
 export type { GitHubPushTriggerProps } from './lib/triggers/github-push.trigger';
 export { GitHubPullRequestTrigger } from './lib/triggers/github-pull-request.trigger';
 export type { GitHubPullRequestTriggerProps } from './lib/triggers/github-pull-request.trigger';
+
+// ─── Infrastructure ──────────────────────────────────────────────────────────
 export { TektonInfraChart } from './charts/tekton-infra.chart';
 export type { TektonInfraChartProps } from './charts/tekton-infra.chart';
 
-// ─── Constants, param specs, and workspace bindings ───────────────────────────
-// Useful for authoring custom tasks and pipelines.
+// ─── Constants, Params, Workspaces ───────────────────────────────────────────
 export * from './lib/constants';
 export * from './lib/params';
 export * from './lib/workspaces';
+
+// ─── Shared Types ────────────────────────────────────────────────────────────
+// PipelineParamSpec and PipelineWorkspaceDeclaration are defined in ./types.ts
+// and re-exported above via ./lib/builder/pipeline-builder for backward compat.
