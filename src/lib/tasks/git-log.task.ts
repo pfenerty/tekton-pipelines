@@ -1,8 +1,12 @@
-import { Construct } from 'constructs';
-import { TektonTaskConstruct, TektonTaskProps } from './tekton-task-construct';
-import { PipelineTask } from './pipeline-task';
-import { WS_WORKSPACE, CHAINGUARD_GIT_IMAGE } from '../constants';
-import { WORKSPACE_BINDING } from '../workspaces';
+import { Construct } from "constructs";
+import { TektonTaskConstruct, TektonTaskProps } from "./tekton-task-construct";
+import { PipelineTask } from "./pipeline-task";
+import {
+    WS_WORKSPACE,
+    CHAINGUARD_GIT_IMAGE,
+    RESTRICTED_STEP_SECURITY_CONTEXT,
+} from "../constants";
+import { WORKSPACE_BINDING } from "../workspaces";
 
 /**
  * Tekton Task that logs structured git state information about the current
@@ -12,21 +16,24 @@ import { WORKSPACE_BINDING } from '../workspaces';
  * body (if present), remote URL, branch/ref, changed files, and diff stats.
  */
 export class GitLogTask extends TektonTaskConstruct {
-  static readonly defaultName = 'git-log';
+    static readonly defaultName = "git-log";
 
-  constructor(scope: Construct, id: string, props: TektonTaskProps) {
-    super(scope, id, props, GitLogTask.defaultName);
-  }
+    constructor(scope: Construct, id: string, props: TektonTaskProps) {
+        super(scope, id, props, GitLogTask.defaultName);
+    }
 
-  protected buildTaskSpec(): Record<string, unknown> {
-    return {
-      steps: [
-        {
-          name: 'log-git-state',
-          image: CHAINGUARD_GIT_IMAGE,
-          workingDir: `$(workspaces.${WS_WORKSPACE}.path)`,
-          script: `#!/bin/sh
+    protected buildTaskSpec(): Record<string, unknown> {
+        return {
+            stepTemplate: { securityContext: RESTRICTED_STEP_SECURITY_CONTEXT },
+            steps: [
+                {
+                    name: "log-git-state",
+                    image: CHAINGUARD_GIT_IMAGE,
+                    workingDir: `$(workspaces.${WS_WORKSPACE}.path)`,
+                    script: `#!/bin/sh
 set -e
+
+git config --global --add safe.directory /workspace/workspace
 
 DIVIDER="══════════════════════════════════════"
 
@@ -45,7 +52,7 @@ BODY="$(git log -1 --pretty='%b')"
 if [ -n "$BODY" ]; then
   echo ""
   echo "Body:"
-  echo "$BODY" | sed 's/^/  /'
+  printf '%s\n' "$BODY" | while IFS= read -r _line; do printf '  %s\n' "$_line"; done
 fi
 echo ""
 
@@ -69,11 +76,11 @@ echo ""
 
 echo "$DIVIDER"
 `,
-        },
-      ],
-      workspaces: [{ name: WS_WORKSPACE }],
-    };
-  }
+                },
+            ],
+            workspaces: [{ name: WS_WORKSPACE }],
+        };
+    }
 }
 
 /**
@@ -82,21 +89,21 @@ echo "$DIVIDER"
  * Binds the 'workspace' pipeline workspace. Typically placed after git-clone.
  */
 export interface GitLogPipelineTaskOptions {
-  runAfter?: PipelineTask | PipelineTask[];
+    runAfter?: PipelineTask | PipelineTask[];
 }
 
 export class GitLogPipelineTask extends PipelineTask {
-  readonly name = 'log-git-state';
+    readonly name = "log-git-state";
 
-  constructor(opts: GitLogPipelineTaskOptions = {}) {
-    super(opts.runAfter ?? []);
-  }
+    constructor(opts: GitLogPipelineTaskOptions = {}) {
+        super(opts.runAfter ?? []);
+    }
 
-  toSpec(): Record<string, unknown> {
-    return this.buildSpec({
-      name: this.name,
-      taskRef: { kind: 'Task', name: GitLogTask.defaultName },
-      workspaces: [WORKSPACE_BINDING],
-    });
-  }
+    toSpec(): Record<string, unknown> {
+        return this.buildSpec({
+            name: this.name,
+            taskRef: { kind: "Task", name: GitLogTask.defaultName },
+            workspaces: [WORKSPACE_BINDING],
+        });
+    }
 }

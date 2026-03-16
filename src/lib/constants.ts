@@ -6,6 +6,8 @@ export const PIPELINE_RUN_API = 'tekton.dev/v1';
 export const WS_WORKSPACE = 'workspace';
 export const WS_GIT_SOURCE = 'git-source';
 export const WS_DOCKERCONFIG = 'dockerconfig';
+export const WS_BASIC_AUTH    = 'basic-auth';
+export const WS_SSH_DIRECTORY = 'ssh-directory';
 
 // Param names
 export const PARAM_GIT_URL = 'git-url';
@@ -42,3 +44,31 @@ export const GITHUB_REPO_URL = 'https://github.com/$(body.repository.full_name)'
 export const SYFT_IMAGE = 'anchore/syft:v1.11.0-debug';
 export const GRYPE_IMAGE = 'anchore/grype:v0.79.6-debug';
 export const CHAINGUARD_GIT_IMAGE = 'cgr.dev/chainguard/git:latest';
+
+/**
+ * Step-level security context injected as a stepTemplate default by TektonTaskConstruct.
+ *
+ * Covers the three PodSecurity "restricted" requirements that are safe to apply
+ * universally. Omits runAsNonRoot so tasks whose images default to root
+ * (e.g. golang:alpine) are not broken — those tasks run in namespaces without the
+ * restricted policy.
+ */
+export const DEFAULT_STEP_SECURITY_CONTEXT = {
+  allowPrivilegeEscalation: false,
+  capabilities: { drop: ['ALL'] },
+  seccompProfile: { type: 'RuntimeDefault' },
+} as const;
+
+/**
+ * Full PodSecurity "restricted" step-level security context.
+ *
+ * Use this in tasks whose images are guaranteed to run as a non-root user
+ * (e.g. cgr.dev/chainguard/git). Return it from buildTaskSpec() as the stepTemplate
+ * to satisfy all four restricted requirements including runAsNonRoot.
+ */
+export const RESTRICTED_STEP_SECURITY_CONTEXT = {
+  allowPrivilegeEscalation: false,
+  capabilities: { drop: ['ALL'] },
+  runAsNonRoot: true,
+  seccompProfile: { type: 'RuntimeDefault' },
+} as const;

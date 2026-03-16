@@ -24,6 +24,7 @@ import {
   OciBuildPipeline,
   TektonInfraChart,
   PipelineBuilder,
+  GitCloneTask,
   GitClonePipelineTask,
   GoTestPipelineTask,
   GenerateSbomPipelineTask,
@@ -45,6 +46,9 @@ const app = new App();
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 // Each task gets its own Chart so it can be applied independently.
+
+const gitCloneChart = new Chart(app, 'task-git-clone');
+new GitCloneTask(gitCloneChart, 'task', { namespace: NAMESPACE });
 
 const goTestChart = new Chart(app, 'task-go-test');
 new GoTestTask(goTestChart, 'task', { namespace: NAMESPACE });
@@ -124,7 +128,7 @@ new TektonInfraChart(app, 'tekton-infra', {
 });
 
 // Suppress unused-variable warnings for task/pipeline charts (exist for synthesis).
-void goTestChart, goBuildChart, generateSbomChart, vulnScanChart;
+void gitCloneChart, goTestChart, goBuildChart, generateSbomChart, vulnScanChart;
 void goPushChart, goPrChart, cibChart, ociBuildChart;
 void customChart;
 

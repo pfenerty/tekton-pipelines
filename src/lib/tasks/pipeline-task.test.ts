@@ -62,10 +62,11 @@ describe('PipelineTask', () => {
       expect(task.name).toBe('clone');
     });
 
-    it('uses a git resolver taskRef (not a local Task)', () => {
+    it('uses a local Task taskRef (kind: Task)', () => {
       const task = new GitClonePipelineTask();
       const spec = task.toSpec() as Record<string, unknown>;
-      expect((spec.taskRef as Record<string, unknown>).resolver).toBe('git');
+      expect((spec.taskRef as Record<string, unknown>).kind).toBe('Task');
+      expect((spec.taskRef as Record<string, unknown>).name).toBe('git-clone');
     });
 
     it('accepts a custom step name', () => {

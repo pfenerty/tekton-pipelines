@@ -17,7 +17,7 @@ export { GitLogTask, GitLogPipelineTask } from './lib/tasks/git-log.task';
 export type { GitLogPipelineTaskOptions } from './lib/tasks/git-log.task';
 
 // ─── Task constructs (external refs — PipelineTask only) ─────────────────────
-export { GitClonePipelineTask } from './lib/tasks/git-clone.task';
+export { GitCloneTask, GitClonePipelineTask } from './lib/tasks/git-clone.task';
 export type { GitClonePipelineTaskOptions } from './lib/tasks/git-clone.task';
 export { KoBuildPipelineTask } from './lib/tasks/ko-build.task';
 export type { KoBuildPipelineTaskOptions } from './lib/tasks/ko-build.task';

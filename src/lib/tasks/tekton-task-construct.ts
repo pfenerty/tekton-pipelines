@@ -1,6 +1,6 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
-import { TEKTON_API_V1 } from '../constants';
+import { TEKTON_API_V1, DEFAULT_STEP_SECURITY_CONTEXT } from '../constants';
 
 export interface TektonTaskProps {
   namespace: string;
@@ -28,7 +28,10 @@ export abstract class TektonTaskConstruct extends Construct {
         name: this.taskName,
         namespace: props.namespace,
       },
-      spec: this.buildTaskSpec(),
+      spec: {
+        stepTemplate: { securityContext: DEFAULT_STEP_SECURITY_CONTEXT },
+        ...this.buildTaskSpec(),
+      },
     });
   }
 

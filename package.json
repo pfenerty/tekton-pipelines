@@ -24,6 +24,7 @@
     "test:watch": "vitest",
     "synth": "npx cdk8s synth",
     "import": "npx cdk8s import",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {

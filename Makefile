@@ -2,11 +2,11 @@
 
 ## Install Node.js dependencies
 install:
-	npm install
+	flox activate -- npm install
 
 ## Synthesize Kubernetes manifests into synth-output/
 synth:
-	npm run synth
+	flox activate -- npm run synth
 
 ## Dry-run diff against the current cluster state
 ## Requires: kubectl configured, Tekton installed in $(NAMESPACE)
