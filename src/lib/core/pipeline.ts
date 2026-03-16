@@ -78,6 +78,7 @@ export class Pipeline {
     id: string,
     namespace: string,
     extraParams?: PipelineParamSpec[],
+    namePrefix?: string,
   ): void {
     this.validate();
 
@@ -105,13 +106,19 @@ export class Pipeline {
       apiVersion: TEKTON_API_V1,
       kind: 'Pipeline',
       metadata: {
-        name: this.name,
+        name: namePrefix ? `${namePrefix}-${this.name}` : this.name,
         namespace,
       },
       spec: {
         params: allParams,
         workspaces,
-        tasks: sorted.map(job => taskMap.get(job)!.toSpec()),
+        tasks: sorted.map(job => {
+          const spec = taskMap.get(job)!.toSpec();
+          if (namePrefix && job._internals.createTaskResource && (spec as any).taskRef) {
+            (spec as any).taskRef.name = `${namePrefix}-${(spec as any).taskRef.name}`;
+          }
+          return spec;
+        }),
       },
     });
   }

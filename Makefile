@@ -7,16 +7,18 @@ install:
 ## Synthesize Kubernetes manifests into synth-output/
 synth:
 	flox activate -- npm run synth
+	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n' > synth-output/kustomization.yaml
+	@for f in synth-output/*.k8s.yaml; do printf '  - %s\n' "$$(basename $$f)"; done >> synth-output/kustomization.yaml
 
 ## Dry-run diff against the current cluster state
 ## Requires: kubectl configured, Tekton installed in $(NAMESPACE)
 NAMESPACE ?= tekton-builds
 diff: synth
-	kubectl diff -f synth-output/ --namespace=$(NAMESPACE)
+	kubectl diff -k synth-output/ --namespace=$(NAMESPACE)
 
 ## Apply all synthesized manifests to the cluster
 apply: synth
-	kubectl apply -f synth-output/
+	kubectl apply -k synth-output/
 
 ## Remove synthesized manifests and compiled output
 clean:

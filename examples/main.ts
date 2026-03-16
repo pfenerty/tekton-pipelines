@@ -53,6 +53,8 @@ const lintPipeline = new Pipeline({
 
 // ─── Synthesize everything ───────────────────────────────────────────────────
 new TektonProject({
+  name: 'homelab',
   namespace: NAMESPACE,
   pipelines: [pushPipeline, prPipeline, lintPipeline],
+  webhookSecretRef: { secretName: 'github-webhook-secret', secretKey: 'secret' },
 });

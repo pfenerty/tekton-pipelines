@@ -21,7 +21,7 @@ export interface JobInternals {
   taskResourceName: string;
   params: PipelineParamSpec[];
   workspaces: PipelineWorkspaceDeclaration[];
-  createTaskResource: ((scope: Construct, id: string, namespace: string) => void) | null;
+  createTaskResource: ((scope: Construct, id: string, namespace: string, namePrefix: string) => void) | null;
   createPipelineTask: (runAfter: PipelineTask[]) => PipelineTask;
 }
 
@@ -67,11 +67,12 @@ export class Job {
       taskResourceName,
       params: [],
       workspaces: [{ name: WS_WORKSPACE }],
-      createTaskResource: (scope, id, namespace) => {
+      createTaskResource: (scope, id, namespace, namePrefix) => {
+        const prefixedName = namePrefix ? `${namePrefix}-${taskResourceName}` : taskResourceName;
         new ApiObject(scope, id, {
           apiVersion: TEKTON_API_V1,
           kind: 'Task',
-          metadata: { name: taskResourceName, namespace },
+          metadata: { name: prefixedName, namespace },
           spec: {
             stepTemplate: { securityContext: DEFAULT_STEP_SECURITY_CONTEXT },
             steps: [

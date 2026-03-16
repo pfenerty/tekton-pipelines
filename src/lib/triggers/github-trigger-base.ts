@@ -23,6 +23,8 @@ export interface GitHubTriggerBaseProps {
   workspaceStorageSize?: string;
   /** ServiceAccount used to run PipelineRuns (default: 'tekton-triggers'). */
   serviceAccountName?: string;
+  /** Project name prefix for multi-tenant resource naming. */
+  namePrefix?: string;
 }
 
 export interface GitHubTriggerConfig {
@@ -50,10 +52,11 @@ export class GitHubTriggerBase extends Construct {
   constructor(scope: Construct, id: string, props: GitHubTriggerBaseProps, config: GitHubTriggerConfig) {
     super(scope, id);
 
-    this.bindingRef = config.bindingName;
-    this.templateRef = config.templateName;
+    const p = props.namePrefix ? `${props.namePrefix}-` : '';
+    this.bindingRef = `${p}${config.bindingName}`;
+    this.templateRef = `${p}${config.templateName}`;
 
-    const serviceAccountName = props.serviceAccountName ?? DEFAULT_SERVICE_ACCOUNT;
+    const serviceAccountName = `${p}${props.serviceAccountName ?? DEFAULT_SERVICE_ACCOUNT}`;
     const workspaceStorage = props.workspaceStorageSize ?? DEFAULT_WORKSPACE_STORAGE;
     const appRoot = props.appRoot ?? DEFAULT_APP_ROOT;
     const buildPath = props.buildPath ?? DEFAULT_BUILD_PATH;
@@ -94,7 +97,7 @@ export class GitHubTriggerBase extends Construct {
             apiVersion: PIPELINE_RUN_API,
             kind: 'PipelineRun',
             metadata: {
-              generateName: config.pipelineRunGenerateName,
+              generateName: `${p}${config.pipelineRunGenerateName}`,
               namespace: '$(tt.params.namespace)',
             },
             spec: {

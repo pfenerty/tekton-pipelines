@@ -13,6 +13,10 @@ export interface TektonInfraChartProps extends ChartProps {
   appRoot?: string;
   /** Default build-path for trigger templates (default: 'cmd'). */
   buildPath?: string;
+  /** Project name prefix for multi-tenant resource naming. */
+  namePrefix?: string;
+  /** Reference to an existing K8s Secret for GitHub webhook HMAC validation. */
+  webhookSecretRef?: { secretName: string; secretKey: string };
 }
 
 /**
@@ -32,7 +36,8 @@ export class TektonInfraChart extends Chart {
     super(scope, id, props);
 
     const namespace = props.namespace;
-    const serviceAccountName = 'tekton-triggers';
+    const p = props.namePrefix ? `${props.namePrefix}-` : '';
+    const serviceAccountName = `${p}tekton-triggers`;
 
     // ── RBAC ─────────────────────────────────────────────────────────────────
 
@@ -45,7 +50,7 @@ export class TektonInfraChart extends Chart {
     new ApiObject(this, 'role-binding', {
       apiVersion: 'rbac.authorization.k8s.io/v1',
       kind: 'RoleBinding',
-      metadata: { name: 'tekton-triggers-eventlistener', namespace },
+      metadata: { name: `${p}tekton-triggers-eventlistener`, namespace },
       roleRef: {
         apiGroup: 'rbac.authorization.k8s.io',
         kind: 'ClusterRole',
@@ -57,7 +62,7 @@ export class TektonInfraChart extends Chart {
     new ApiObject(this, 'cluster-role-binding', {
       apiVersion: 'rbac.authorization.k8s.io/v1',
       kind: 'ClusterRoleBinding',
-      metadata: { name: 'tekton-triggers-eventlistener' },
+      metadata: { name: `${p}tekton-triggers-eventlistener` },
       roleRef: {
         apiGroup: 'rbac.authorization.k8s.io',
         kind: 'ClusterRole',
@@ -70,6 +75,7 @@ export class TektonInfraChart extends Chart {
 
     const pushTrigger = new GitHubPushTrigger(this, 'github-push-trigger', {
       namespace,
+      namePrefix: props.namePrefix,
       pipelineRef: props.pushPipelineRef ?? 'go-push',
       appRoot: props.appRoot,
       buildPath: props.buildPath,
@@ -77,6 +83,7 @@ export class TektonInfraChart extends Chart {
 
     const prTrigger = new GitHubPullRequestTrigger(this, 'github-pr-trigger', {
       namespace,
+      namePrefix: props.namePrefix,
       pipelineRef: props.pullRequestPipelineRef ?? 'go-merge-request',
       appRoot: props.appRoot,
       buildPath: props.buildPath,
@@ -87,7 +94,7 @@ export class TektonInfraChart extends Chart {
     new ApiObject(this, 'event-listener', {
       apiVersion: 'triggers.tekton.dev/v1beta1',
       kind: 'EventListener',
-      metadata: { name: 'github-listener', namespace },
+      metadata: { name: `${p}github-listener`, namespace },
       spec: {
         serviceAccountName,
         triggers: [
@@ -96,7 +103,10 @@ export class TektonInfraChart extends Chart {
             interceptors: [
               {
                 ref: { kind: 'ClusterInterceptor', name: 'github' },
-                params: [{ name: 'eventTypes', value: ['push'] }],
+                params: [
+                  { name: 'eventTypes', value: ['push'] },
+                  ...(props.webhookSecretRef ? [{ name: 'secretRef', value: props.webhookSecretRef }] : []),
+                ],
               },
             ],
             template: { ref: pushTrigger.templateRef },
@@ -106,7 +116,10 @@ export class TektonInfraChart extends Chart {
             interceptors: [
               {
                 ref: { kind: 'ClusterInterceptor', name: 'github' },
-                params: [{ name: 'eventTypes', value: ['pull_request'] }],
+                params: [
+                  { name: 'eventTypes', value: ['pull_request'] },
+                  ...(props.webhookSecretRef ? [{ name: 'secretRef', value: props.webhookSecretRef }] : []),
+                ],
               },
             ],
             template: { ref: prTrigger.templateRef },

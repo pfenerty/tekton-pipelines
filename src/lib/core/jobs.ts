@@ -36,8 +36,8 @@ const generateSbomFactory = (opts?: { needs?: Job | Job[] }): Job => {
       { name: PARAM_APP_ROOT, description: 'path to root of the app', type: 'string' },
     ],
     workspaces: [{ name: WS_WORKSPACE }],
-    createTaskResource: (scope, id, namespace) => {
-      new GenerateSbomTask(scope, id, { namespace });
+    createTaskResource: (scope, id, namespace, namePrefix) => {
+      new GenerateSbomTask(scope, id, { namespace, namePrefix });
     },
     createPipelineTask: (runAfter) => new GenerateSbomPipelineTask({ runAfter }),
   });
@@ -60,8 +60,8 @@ export const JOBS = {
         { name: PARAM_GIT_REVISION, type: 'string' },
       ],
       workspaces,
-      createTaskResource: (scope, id, namespace) => {
-        new GitCloneTask(scope, id, { namespace });
+      createTaskResource: (scope, id, namespace, namePrefix) => {
+        new GitCloneTask(scope, id, { namespace, namePrefix });
       },
       createPipelineTask: (runAfter) =>
         new GitClonePipelineTask({
@@ -77,8 +77,8 @@ export const JOBS = {
       taskResourceName: GitLogTask.defaultName,
       params: [],
       workspaces: [{ name: WS_WORKSPACE }],
-      createTaskResource: (scope, id, namespace) => {
-        new GitLogTask(scope, id, { namespace });
+      createTaskResource: (scope, id, namespace, namePrefix) => {
+        new GitLogTask(scope, id, { namespace, namePrefix });
       },
       createPipelineTask: (runAfter) => new GitLogPipelineTask({ runAfter }),
     });
@@ -98,8 +98,8 @@ export const JOBS = {
         { ...GOLANG_VARIANT_PARAM_SPEC },
       ],
       workspaces: [{ name: WS_WORKSPACE }],
-      createTaskResource: (scope, id, namespace) => {
-        new GoTestTask(scope, id, { namespace });
+      createTaskResource: (scope, id, namespace, namePrefix) => {
+        new GoTestTask(scope, id, { namespace, namePrefix });
       },
       createPipelineTask: (runAfter) => new GoTestPipelineTask({ runAfter }),
     });
@@ -119,8 +119,8 @@ export const JOBS = {
         { ...GOLANG_VARIANT_PARAM_SPEC },
       ],
       workspaces: [{ name: WS_WORKSPACE }],
-      createTaskResource: (scope, id, namespace) => {
-        new GoBuildTask(scope, id, { namespace });
+      createTaskResource: (scope, id, namespace, namePrefix) => {
+        new GoBuildTask(scope, id, { namespace, namePrefix });
       },
       createPipelineTask: (runAfter) => new GoBuildPipelineTask({ runAfter }),
     });
@@ -134,8 +134,8 @@ export const JOBS = {
       taskResourceName: VulnScanTask.defaultName,
       params: [],
       workspaces: [{ name: WS_WORKSPACE }],
-      createTaskResource: (scope, id, namespace) => {
-        new VulnScanTask(scope, id, { namespace });
+      createTaskResource: (scope, id, namespace, namePrefix) => {
+        new VulnScanTask(scope, id, { namespace, namePrefix });
       },
       createPipelineTask: (runAfter) => new VulnScanPipelineTask({ runAfter }),
     });

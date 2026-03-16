@@ -14,17 +14,20 @@ import { Pipeline } from './pipeline';
 import { TRIGGER_EVENTS } from './trigger-events';
 
 export interface TektonProjectOptions {
+  name?: string;
   namespace: string;
   pipelines: Pipeline[];
   serviceAccountName?: string;
   workspaceStorageSize?: string;
   appRoot?: string;
   buildPath?: string;
+  webhookSecretRef?: { secretName: string; secretKey: string };
 }
 
 export class TektonProject {
   constructor(opts: TektonProjectOptions) {
     const app = new App();
+    const prefix = opts.name ?? '';
     const namespace = opts.namespace;
     const appRoot = opts.appRoot ?? DEFAULT_APP_ROOT;
     const buildPath = opts.buildPath ?? DEFAULT_BUILD_PATH;
@@ -48,7 +51,7 @@ export class TektonProject {
     // 1. Collect unique task resources across all pipelines
     const taskResources = new Map<
       string,
-      (scope: import('constructs').Construct, id: string, ns: string) => void
+      (scope: import('constructs').Construct, id: string, ns: string, namePrefix: string) => void
     >();
     for (const pipeline of opts.pipelines) {
       for (const job of pipeline.jobs) {
@@ -61,14 +64,14 @@ export class TektonProject {
 
     // 2. Create a Chart per task resource
     for (const [name, factory] of taskResources) {
-      const chart = new Chart(app, `task-${name}`);
-      factory(chart, 'task', namespace);
+      const chart = new Chart(app, prefix ? `${prefix}-task-${name}` : `task-${name}`);
+      factory(chart, 'task', namespace, prefix);
     }
 
     // 3. Build each pipeline
     for (const pipeline of opts.pipelines) {
-      const chart = new Chart(app, `pipeline-${pipeline.name}`);
-      pipeline._build(chart, 'pipeline', namespace, baseParams);
+      const chart = new Chart(app, prefix ? `${prefix}-pipeline-${pipeline.name}` : `pipeline-${pipeline.name}`);
+      pipeline._build(chart, 'pipeline', namespace, baseParams, prefix || undefined);
     }
 
     // 4. Create infra chart if any pipeline has triggers
@@ -80,12 +83,14 @@ export class TektonProject {
     );
 
     if (pushPipeline || prPipeline) {
-      new TektonInfraChart(app, 'tekton-infra', {
+      new TektonInfraChart(app, prefix ? `${prefix}-tekton-infra` : 'tekton-infra', {
         namespace,
-        pushPipelineRef: pushPipeline?.name,
-        pullRequestPipelineRef: prPipeline?.name,
+        namePrefix: prefix || undefined,
+        pushPipelineRef: pushPipeline ? (prefix ? `${prefix}-${pushPipeline.name}` : pushPipeline.name) : undefined,
+        pullRequestPipelineRef: prPipeline ? (prefix ? `${prefix}-${prPipeline.name}` : prPipeline.name) : undefined,
         appRoot,
         buildPath,
+        webhookSecretRef: opts.webhookSecretRef,
       });
     }
 

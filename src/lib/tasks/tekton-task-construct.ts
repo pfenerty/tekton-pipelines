@@ -5,6 +5,7 @@ import { TEKTON_API_V1, DEFAULT_STEP_SECURITY_CONTEXT } from '../constants';
 export interface TektonTaskProps {
   namespace: string;
   name?: string;
+  namePrefix?: string;
 }
 
 /**
@@ -19,7 +20,7 @@ export abstract class TektonTaskConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: TektonTaskProps, defaultName: string) {
     super(scope, id);
-    this.taskName = props.name ?? defaultName;
+    this.taskName = props.name ?? (props.namePrefix ? `${props.namePrefix}-${defaultName}` : defaultName);
 
     new ApiObject(this, 'resource', {
       apiVersion: TEKTON_API_V1,
