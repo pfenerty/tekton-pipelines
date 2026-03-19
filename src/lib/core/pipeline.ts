@@ -75,7 +75,7 @@ export class Pipeline {
     const seen = new Map<string, Param>();
     for (const task of [...this.allTasks, ...this.finallyTasks]) {
       for (const p of task.params) {
-        if (!seen.has(p.name)) seen.set(p.name, p);
+        if (!seen.has(p.name) && !p.pipelineExpression) seen.set(p.name, p);
       }
     }
     for (const p of this.extraParams) {

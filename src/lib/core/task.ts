@@ -24,6 +24,8 @@ export interface TaskStepSpec {
     value?: string;
     valueFrom?: { secretKeyRef: { name: string; key: string } };
   }[];
+  /** Controls behaviour when this step fails. `continue` lets subsequent steps run. */
+  onError?: 'continue' | 'stopAndFail';
 }
 
 /** Options for constructing a {@link Task}. */
@@ -98,7 +100,10 @@ export class Task {
       taskRef: { kind: 'Task', name: taskRefName },
     };
     if (this.params.length > 0) {
-      spec.params = this.params.map(p => ({ name: p.name, value: `$(params.${p.name})` }));
+      spec.params = this.params.map(p => ({
+        name: p.name,
+        value: p.pipelineExpression ?? `$(params.${p.name})`,
+      }));
     }
     if (this.workspaces.length > 0) {
       spec.workspaces = this.workspaces.map(w => ({ name: w.name, workspace: w.name }));

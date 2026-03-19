@@ -2,14 +2,18 @@ import {
     Param,
     Workspace,
     Task,
+    TaskStepSpec,
     Pipeline,
     TektonProject,
     TRIGGER_EVENTS,
     RESTRICTED_STEP_SECURITY_CONTEXT,
 } from "../src";
 
-// --- Variables ───────────────────────────────────────────────────────────────
-const nodeVersion = "22";
+// --- Images ---───────────────────────────────────────────────────────────────
+const curlImage = "cgr.dev/chainguard/curl:latest-dev";
+const gitImage = "cgr.dev/chainguard/git:latest";
+const nodeImage = "node:22-alpine";
+const trivyImage = "aquasec/trivy:latest";
 
 // ─── Shared workspace ────────────────────────────────────────────────────────
 const workspace = new Workspace({ name: "workspace" });
@@ -24,38 +28,56 @@ const buildPathParam = new Param({
 });
 const repoFullName = new Param({ name: "repo-full-name", type: "string" });
 
-// ─── Tasks ───────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 const ghTokenEnv = {
-    name: "GH_TOKEN",
+    name: "GITHUB_TOKEN",
     valueFrom: { secretKeyRef: { name: "github-token", key: "token" } },
 };
 
-const setPendingStatus = new Task({
-    name: "set-pending-status",
-    params: [revisionParam, repoFullName],
-    steps: [
-        {
-            name: "set-pending",
-            image: "cgr.dev/chainguard/gh:latest",
-            env: [ghTokenEnv],
-            script: `#!/bin/sh
-set -e
-gh api "repos/$(params.repo-full-name)/statuses/$(params.revision)" \
-  -f state=pending -f context=tektonic-ci -f description="Pipeline running"`,
-        },
-    ],
-});
+function pendingStep(context: string): TaskStepSpec {
+    return {
+        name: "set-pending",
+        image: curlImage,
+        env: [ghTokenEnv],
+        command: ["sh", "-c"],
+        args: [
+            `curl -fsS -X POST \
+  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -d "{\\"state\\":\\"pending\\",\\"context\\":\\"${context}\\",\\"description\\":\\"Running\\"}" \
+  "https://api.github.com/repos/$(params.repo-full-name)/statuses/$(params.revision)"`,
+        ],
+    };
+}
 
+function statusStep(context: string): TaskStepSpec {
+    return {
+        name: "report-status",
+        image: curlImage,
+        env: [ghTokenEnv],
+        command: ["sh", "-c"],
+        args: [
+            `EXIT_CODE=$(cat /tekton/home/.exit-code)
+if [ "$EXIT_CODE" -eq 0 ]; then STATE=success DESC=Passed; else STATE=failure DESC=Failed; fi
+curl -fsS -X POST \
+  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -d "{\\"state\\":\\"$STATE\\",\\"context\\":\\"${context}\\",\\"description\\":\\"$DESC\\"}" \
+  "https://api.github.com/repos/$(params.repo-full-name)/statuses/$(params.revision)"`,
+        ],
+    };
+}
+
+// ─── Tasks ───────────────────────────────────────────────────────────────────
 const gitClone = new Task({
     name: "git-clone",
     stepTemplate: { securityContext: RESTRICTED_STEP_SECURITY_CONTEXT },
     params: [urlParam, revisionParam],
     workspaces: [workspace],
-    needs: [setPendingStatus],
     steps: [
         {
             name: "clone",
-            image: "cgr.dev/chainguard/git:latest",
+            image: gitImage,
             workingDir: workspace.path,
             script: `#!/bin/sh
 set -e
@@ -68,31 +90,39 @@ git checkout ${revisionParam}`,
 
 const npmTest = new Task({
     name: "test-npm",
-    params: [buildPathParam],
+    params: [buildPathParam, repoFullName, revisionParam],
     workspaces: [workspace],
     needs: [gitClone],
     steps: [
+        pendingStep("tektonic-ci/test"),
         {
             name: "test",
-            image: `node:${nodeVersion}-alpine`,
+            image: nodeImage,
             workingDir: `${workspace.path}/${buildPathParam}`,
-            command: ["sh", "-c", "npm ci && npm test"],
+            command: ["sh", "-c"],
+            args: ["npm ci && npm test; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC"],
+            onError: "continue",
         },
+        statusStep("tektonic-ci/test"),
     ],
 });
 
 const npmBuild = new Task({
     name: "build-npm",
-    params: [buildPathParam],
+    params: [buildPathParam, repoFullName, revisionParam],
     workspaces: [workspace],
-    needs: [gitClone],
+    needs: [npmTest],
     steps: [
+        pendingStep("tektonic-ci/build"),
         {
             name: "build",
-            image: `node:${nodeVersion}-alpine`,
+            image: nodeImage,
             workingDir: `${workspace.path}/${buildPathParam}`,
-            command: ["sh", "-c", "npm ci && npm run build"],
+            command: ["sh", "-c"],
+            args: ["npm run build; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC"],
+            onError: "continue",
         },
+        statusStep("tektonic-ci/build"),
     ],
 });
 
@@ -102,54 +132,34 @@ const trivyScan = new Task({
     workspaces: [workspace],
     needs: [gitClone],
     steps: [
+        pendingStep("tektonic-ci/scan"),
         {
             name: "scan",
-            image: "aquasec/trivy:latest",
+            image: trivyImage,
             workingDir: workspace.path,
-            command: [
-                "trivy",
-                "fs",
-                "--format",
-                "sarif",
-                "--output",
-                `${workspace.path}/trivy.sarif`,
-                ".",
+            command: ["sh", "-c"],
+            args: [
+                `trivy fs --format sarif --output ${workspace.path}/trivy.sarif .; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC`,
             ],
+            onError: "continue",
         },
         {
             name: "upload-sarif",
-            image: "cgr.dev/chainguard/wolfi-base:latest",
+            image: curlImage,
             workingDir: workspace.path,
             env: [ghTokenEnv],
-            script: `#!/bin/sh
-set -e
-apk add --no-cache github-cli gzip
+            command: ["sh", "-c"],
+            args: [
+                `set -e
 SARIF=$(gzip -c trivy.sarif | base64 -w0)
-gh api "repos/$(params.repo-full-name)/code-scanning/sarifs" \
-  -f commit_sha="$(params.revision)" -f ref=refs/heads/main -f sarif="$SARIF"`,
+curl -fsS -X POST \
+  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -d "{\\"commit_sha\\":\\"$(params.revision)\\",\\"ref\\":\\"refs/heads/main\\",\\"sarif\\":\\"$SARIF\\"}" \
+  "https://api.github.com/repos/$(params.repo-full-name)/code-scanning/sarifs"`,
+            ],
         },
-    ],
-});
-
-// ─── Finally tasks ──────────────────────────────────────────────────────────
-const setFinalStatus = new Task({
-    name: "set-final-status",
-    params: [revisionParam, repoFullName],
-    steps: [
-        {
-            name: "set-status",
-            image: "cgr.dev/chainguard/gh:latest",
-            env: [ghTokenEnv],
-            script: `#!/bin/sh
-set -e
-if [ "$(tasks.status)" = "Succeeded" ]; then
-  STATE=success DESC="Pipeline succeeded"
-else
-  STATE=failure DESC="Pipeline failed"
-fi
-gh api "repos/$(params.repo-full-name)/statuses/$(params.revision)" \
-  -f state="$STATE" -f context=tektonic-ci -f description="$DESC"`,
-        },
+        statusStep("tektonic-ci/scan"),
     ],
 });
 
@@ -158,14 +168,12 @@ const pushPipeline = new Pipeline({
     name: "npm-push",
     triggers: [TRIGGER_EVENTS.PUSH],
     tasks: [npmTest, trivyScan],
-    finallyTasks: [setFinalStatus],
 });
 
 const prPipeline = new Pipeline({
     name: "npm-pull-request",
     triggers: [TRIGGER_EVENTS.PULL_REQUEST],
     tasks: [npmTest, npmBuild, trivyScan],
-    finallyTasks: [setFinalStatus],
 });
 
 // ─── Synthesize ──────────────────────────────────────────────────────────────
