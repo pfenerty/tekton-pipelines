@@ -75,6 +75,7 @@ export class GitHubTriggerBase extends Construct {
           { name: 'namespace', value: props.namespace },
           { name: 'gitrepositoryurl', value: GITHUB_REPO_URL },
           { name: 'projectname', value: '$(body.repository.name)' },
+          { name: 'repo-full-name', value: '$(body.repository.full_name)' },
         ],
       },
     });
@@ -92,6 +93,7 @@ export class GitHubTriggerBase extends Construct {
           { name: 'gitrepositoryurl', description: 'The git repository url' },
           { name: 'namespace', description: 'The namespace to create the resources' },
           { name: 'projectname', description: 'name of the project' },
+          { name: 'repo-full-name', description: 'GitHub owner/repo' },
         ],
         resourcetemplates: [
           {
@@ -108,6 +110,7 @@ export class GitHubTriggerBase extends Construct {
                 { name: revisionParamName, value: '$(tt.params.gitrevision)' },
                 { name: urlParamName, value: '$(tt.params.gitrepositoryurl)' },
                 { name: 'project-name', value: '$(tt.params.projectname)' },
+                { name: 'repo-full-name', value: '$(tt.params.repo-full-name)' },
               ],
               workspaces: [
                 {

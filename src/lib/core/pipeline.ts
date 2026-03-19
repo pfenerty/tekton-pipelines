@@ -17,6 +17,8 @@ export interface PipelineOptions {
   triggers?: TRIGGER_EVENTS[];
   /** Top-level tasks. Transitive dependencies are auto-discovered via `task.needs`. */
   tasks: Task[];
+  /** Tasks that run unconditionally after all regular tasks complete or fail. */
+  finallyTasks?: Task[];
   /** Additional pipeline-level params not tied to any specific task. */
   params?: Param[];
 }
@@ -36,6 +38,8 @@ export class Pipeline {
   readonly tasks: Task[];
   /** All tasks including transitive dependencies discovered via `task.needs`. */
   readonly allTasks: Task[];
+  /** Tasks that run unconditionally after all regular tasks complete or fail. */
+  readonly finallyTasks: Task[];
   private readonly extraParams: Param[];
 
   private static _counter = 0;
@@ -51,6 +55,7 @@ export class Pipeline {
     this.triggers = opts.triggers ?? [];
     this.tasks = opts.tasks;
     this.allTasks = this.discoverAllTasks(opts.tasks);
+    this.finallyTasks = opts.finallyTasks ?? [];
     this.extraParams = opts.params ?? [];
   }
 
@@ -68,9 +73,9 @@ export class Pipeline {
   /** Returns the de-duplicated union of all task params plus any extra pipeline-level params. */
   inferParams(): Record<string, unknown>[] {
     const seen = new Map<string, Param>();
-    for (const task of this.allTasks) {
+    for (const task of [...this.allTasks, ...this.finallyTasks]) {
       for (const p of task.params) {
-        if (!seen.has(p.name)) seen.set(p.name, p);
+        if (!seen.has(p.name) && !p.pipelineExpression) seen.set(p.name, p);
       }
     }
     for (const p of this.extraParams) {
@@ -82,7 +87,7 @@ export class Pipeline {
   /** Returns the de-duplicated union of all task workspaces. */
   inferWorkspaces(): Record<string, unknown>[] {
     const seen = new Map<string, Workspace>();
-    for (const task of this.allTasks) {
+    for (const task of [...this.allTasks, ...this.finallyTasks]) {
       for (const w of task.workspaces) {
         if (!seen.has(w.name)) seen.set(w.name, w);
       }
@@ -109,7 +114,7 @@ export class Pipeline {
         namespace,
       },
       spec: {
-        params: [...(extraParams ?? []), ...this.inferParams()],
+        params: this.deduplicateParams([...(extraParams ?? []), ...this.inferParams()]),
         workspaces: this.inferWorkspaces(),
         tasks: sorted.map(task => {
           const runAfterNames = task.needs
@@ -117,7 +122,22 @@ export class Pipeline {
             .map(dep => dep.name);
           return task._toPipelineTaskSpec(runAfterNames, namePrefix);
         }),
+        ...(this.finallyTasks.length > 0 && {
+          finally: this.finallyTasks.map(task =>
+            task._toPipelineTaskSpec([], namePrefix),
+          ),
+        }),
       },
+    });
+  }
+
+  private deduplicateParams(params: Record<string, unknown>[]): Record<string, unknown>[] {
+    const seen = new Set<string>();
+    return params.filter(p => {
+      const name = p.name as string;
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
     });
   }
 

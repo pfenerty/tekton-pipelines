@@ -8,6 +8,13 @@ export interface ParamOptions {
   type?: 'string' | 'array' | 'object';
   /** Default value used when the param is not supplied at runtime. */
   default?: string | string[];
+  /**
+   * Pipeline-level expression to use as the param value in a pipeline task spec,
+   * instead of the default `$(params.<name>)`. Useful for Tekton built-in variables
+   * like `$(tasks.status)` in finally tasks. Params with this set are excluded from
+   * pipeline-level param inference since their value is not user-supplied.
+   */
+  pipelineExpression?: string;
 }
 
 /**
@@ -25,12 +32,14 @@ export class Param {
   readonly description?: string;
   readonly type: string;
   readonly default?: string | string[];
+  readonly pipelineExpression?: string;
 
   constructor(opts: ParamOptions) {
     this.name = opts.name;
     this.description = opts.description;
     this.type = opts.type ?? 'string';
     this.default = opts.default;
+    this.pipelineExpression = opts.pipelineExpression;
   }
 
   /** Returns the Tekton interpolation expression `$(params.<name>)`. */

@@ -43,10 +43,10 @@ export class TektonProject {
     const prefix = opts.name ?? '';
     const namespace = opts.namespace;
 
-    // 1. Collect unique Tasks across all pipelines
+    // 1. Collect unique Tasks across all pipelines (including finally tasks)
     const uniqueTasks = new Map<string, Task>();
     for (const pipeline of opts.pipelines) {
-      for (const task of pipeline.allTasks) {
+      for (const task of [...pipeline.allTasks, ...pipeline.finallyTasks]) {
         if (!uniqueTasks.has(task.name)) {
           uniqueTasks.set(task.name, task);
         }
@@ -63,7 +63,10 @@ export class TektonProject {
     for (const pipeline of opts.pipelines) {
       const chart = new Chart(app, prefix ? `${prefix}-pipeline-${pipeline.name}` : `pipeline-${pipeline.name}`);
       const extraParams = pipeline.triggers.length > 0
-        ? [{ name: 'project-name', type: 'string' }]
+        ? [
+            { name: 'project-name', type: 'string' },
+            { name: 'repo-full-name', type: 'string' },
+          ]
         : [];
       pipeline._build(chart, 'pipeline', namespace, extraParams, prefix || undefined);
     }
