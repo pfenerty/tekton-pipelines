@@ -1,77 +1,71 @@
 import { App, Chart } from 'cdk8s';
-import { PipelineParamSpec } from '../../types';
 import { TektonInfraChart } from '../../charts/tekton-infra.chart';
-import {
-  PARAM_GIT_URL,
-  PARAM_GIT_REVISION,
-  PARAM_PROJECT_NAME,
-  PARAM_APP_ROOT,
-  PARAM_BUILD_PATH,
-  DEFAULT_APP_ROOT,
-  DEFAULT_BUILD_PATH,
-} from '../constants';
 import { Pipeline } from './pipeline';
+import { Task } from './task';
 import { TRIGGER_EVENTS } from './trigger-events';
 
+/** Options for constructing a {@link TektonProject}. */
 export interface TektonProjectOptions {
+  /** Optional name prefix applied to all generated resource names. */
   name?: string;
+  /** Kubernetes namespace for all generated resources. */
   namespace: string;
+  /** Pipelines to synthesize. */
   pipelines: Pipeline[];
+  /** Service account name for trigger infrastructure. Defaults to `"tekton-triggers"`. */
   serviceAccountName?: string;
+  /** PVC size for pipeline workspace volumes. Defaults to `"1Gi"`. */
   workspaceStorageSize?: string;
-  appRoot?: string;
-  buildPath?: string;
+  /** Kubernetes Secret reference for GitHub webhook validation. */
   webhookSecretRef?: { secretName: string; secretKey: string };
+  /** Output directory for synthesized YAML. Defaults to cdk8s default (`dist`). */
+  outdir?: string;
+  /** Pipeline param name that receives the repository URL. Defaults to `"url"`. */
+  urlParam?: string;
+  /** Pipeline param name that receives the git revision. Defaults to `"revision"`. */
+  revisionParam?: string;
 }
 
+/**
+ * Top-level orchestrator that synthesizes an entire Tekton project to YAML.
+ *
+ * Given a set of pipelines, TektonProject:
+ * 1. Collects and de-duplicates all tasks across pipelines
+ * 2. Synthesizes each task as a separate Tekton Task resource
+ * 3. Builds each pipeline with auto-inferred params and workspaces
+ * 4. Generates trigger infrastructure (RBAC, EventListener, TriggerBindings/Templates)
+ *    for any pipeline associated with a {@link TRIGGER_EVENTS | trigger event}
+ * 5. Writes all resources as YAML files to the output directory
+ */
 export class TektonProject {
   constructor(opts: TektonProjectOptions) {
-    const app = new App();
+    const app = new App(opts.outdir ? { outdir: opts.outdir } : undefined);
     const prefix = opts.name ?? '';
     const namespace = opts.namespace;
-    const appRoot = opts.appRoot ?? DEFAULT_APP_ROOT;
-    const buildPath = opts.buildPath ?? DEFAULT_BUILD_PATH;
 
-    const baseParams: PipelineParamSpec[] = [
-      { name: PARAM_GIT_URL, type: 'string' },
-      { name: PARAM_GIT_REVISION, type: 'string' },
-      { name: PARAM_PROJECT_NAME, type: 'string' },
-      {
-        name: PARAM_APP_ROOT,
-        description: 'path to root of the app (should contain go.mod, go.sum files)',
-        type: 'string',
-      },
-      {
-        name: PARAM_BUILD_PATH,
-        description: 'path under app-root to target for build',
-        type: 'string',
-      },
-    ];
-
-    // 1. Collect unique task resources across all pipelines
-    const taskResources = new Map<
-      string,
-      (scope: import('constructs').Construct, id: string, ns: string, namePrefix: string) => void
-    >();
+    // 1. Collect unique Tasks across all pipelines
+    const uniqueTasks = new Map<string, Task>();
     for (const pipeline of opts.pipelines) {
-      for (const job of pipeline.jobs) {
-        const { taskResourceName, createTaskResource } = job._internals;
-        if (createTaskResource && !taskResources.has(taskResourceName)) {
-          taskResources.set(taskResourceName, createTaskResource);
+      for (const task of pipeline.allTasks) {
+        if (!uniqueTasks.has(task.name)) {
+          uniqueTasks.set(task.name, task);
         }
       }
     }
 
-    // 2. Create a Chart per task resource
-    for (const [name, factory] of taskResources) {
+    // 2. Synth each unique Task
+    for (const [name, task] of uniqueTasks) {
       const chart = new Chart(app, prefix ? `${prefix}-task-${name}` : `task-${name}`);
-      factory(chart, 'task', namespace, prefix);
+      task.synth(chart, namespace, prefix || undefined);
     }
 
-    // 3. Build each pipeline
+    // 3. Build each Pipeline
     for (const pipeline of opts.pipelines) {
       const chart = new Chart(app, prefix ? `${prefix}-pipeline-${pipeline.name}` : `pipeline-${pipeline.name}`);
-      pipeline._build(chart, 'pipeline', namespace, baseParams, prefix || undefined);
+      const extraParams = pipeline.triggers.length > 0
+        ? [{ name: 'project-name', type: 'string' }]
+        : [];
+      pipeline._build(chart, 'pipeline', namespace, extraParams, prefix || undefined);
     }
 
     // 4. Create infra chart if any pipeline has triggers
@@ -81,16 +75,21 @@ export class TektonProject {
     const prPipeline = opts.pipelines.find(p =>
       p.triggers.includes(TRIGGER_EVENTS.PULL_REQUEST),
     );
+    const tagPipeline = opts.pipelines.find(p =>
+      p.triggers.includes(TRIGGER_EVENTS.TAG),
+    );
 
-    if (pushPipeline || prPipeline) {
+    if (pushPipeline || prPipeline || tagPipeline) {
+      const prefixName = (name: string) => prefix ? `${prefix}-${name}` : name;
       new TektonInfraChart(app, prefix ? `${prefix}-tekton-infra` : 'tekton-infra', {
         namespace,
         namePrefix: prefix || undefined,
-        pushPipelineRef: pushPipeline ? (prefix ? `${prefix}-${pushPipeline.name}` : pushPipeline.name) : undefined,
-        pullRequestPipelineRef: prPipeline ? (prefix ? `${prefix}-${prPipeline.name}` : prPipeline.name) : undefined,
-        appRoot,
-        buildPath,
+        pushPipelineRef: pushPipeline ? prefixName(pushPipeline.name) : undefined,
+        pullRequestPipelineRef: prPipeline ? prefixName(prPipeline.name) : undefined,
+        tagPipelineRef: tagPipeline ? prefixName(tagPipeline.name) : undefined,
         webhookSecretRef: opts.webhookSecretRef,
+        urlParam: opts.urlParam,
+        revisionParam: opts.revisionParam,
       });
     }
 

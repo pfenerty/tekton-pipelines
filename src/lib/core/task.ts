@@ -1,0 +1,107 @@
+import { Construct } from 'constructs';
+import { ApiObject } from 'cdk8s';
+import { TEKTON_API_V1, DEFAULT_STEP_SECURITY_CONTEXT } from '../constants';
+import { Param } from './param';
+import { Workspace } from './workspace';
+
+/** Specification for a single step within a Tekton Task. */
+export interface TaskStepSpec {
+  /** Step name (must be unique within the task). */
+  name: string;
+  /** Container image to run for this step. */
+  image: string;
+  /** Entrypoint command override. */
+  command?: string[];
+  /** Arguments passed to the entrypoint. */
+  args?: string[];
+  /** Inline script executed by the step. */
+  script?: string;
+  /** Working directory for the step. */
+  workingDir?: string;
+  /** Environment variables injected into the step container. */
+  env?: { name: string; value: string }[];
+}
+
+/** Options for constructing a {@link Task}. */
+export interface TaskOptions {
+  /** Task name used in Tekton manifests and pipeline task references. */
+  name: string;
+  /** Parameters accepted by this task. */
+  params?: Param[];
+  /** Workspaces required by this task. */
+  workspaces?: Workspace[];
+  /** Ordered list of steps the task executes. */
+  steps: TaskStepSpec[];
+  /** Tasks that must complete before this task runs (dependency graph edges). */
+  needs?: Task[];
+  /** Override or extend the default step template (merged with security context defaults). */
+  stepTemplate?: Record<string, unknown>;
+}
+
+/**
+ * A Tekton Task definition.
+ *
+ * Tasks are the unit of work in a Tekton pipeline. Each task declares its
+ * params, workspaces, and steps. The {@link needs} array defines the dependency
+ * graph — pipelines automatically discover transitive dependencies and set
+ * `runAfter` ordering.
+ *
+ * All steps inherit a secure-by-default `stepTemplate` that drops all
+ * capabilities and enables seccomp. Override via the `stepTemplate` option.
+ */
+export class Task {
+  readonly name: string;
+  readonly params: Param[];
+  readonly workspaces: Workspace[];
+  readonly steps: TaskStepSpec[];
+  /** Tasks that must complete before this task runs. */
+  readonly needs: Task[];
+  readonly stepTemplate?: Record<string, unknown>;
+
+  constructor(opts: TaskOptions) {
+    this.name = opts.name;
+    this.params = opts.params ?? [];
+    this.workspaces = opts.workspaces ?? [];
+    this.steps = opts.steps;
+    this.needs = opts.needs ?? [];
+    this.stepTemplate = opts.stepTemplate;
+  }
+
+  /** Synthesizes the Tekton Task resource into the given cdk8s scope. */
+  synth(scope: Construct, namespace: string, namePrefix?: string): void {
+    const resourceName = namePrefix ? `${namePrefix}-${this.name}` : this.name;
+    new ApiObject(scope, this.name, {
+      apiVersion: TEKTON_API_V1,
+      kind: 'Task',
+      metadata: { name: resourceName, namespace },
+      spec: {
+        stepTemplate: {
+          securityContext: DEFAULT_STEP_SECURITY_CONTEXT,
+          ...(this.stepTemplate ?? {}),
+        },
+        ...(this.params.length > 0 && { params: this.params.map(p => p.toSpec()) }),
+        ...(this.workspaces.length > 0 && { workspaces: this.workspaces.map(w => w.toSpec()) }),
+        steps: this.steps,
+      },
+    });
+  }
+
+  /** @internal Generates the pipeline task spec used inside a Pipeline resource. */
+  _toPipelineTaskSpec(runAfterNames: string[], namePrefix?: string): Record<string, unknown> {
+    const taskRefName = namePrefix ? `${namePrefix}-${this.name}` : this.name;
+    const spec: Record<string, unknown> = {
+      name: this.name,
+      taskRef: { kind: 'Task', name: taskRefName },
+    };
+    if (this.params.length > 0) {
+      spec.params = this.params.map(p => ({ name: p.name, value: `$(params.${p.name})` }));
+    }
+    if (this.workspaces.length > 0) {
+      spec.workspaces = this.workspaces.map(w => ({ name: w.name, workspace: w.name }));
+    }
+    if (runAfterNames.length > 0) {
+      spec.runAfter = runAfterNames;
+    }
+    return spec;
+  }
+}

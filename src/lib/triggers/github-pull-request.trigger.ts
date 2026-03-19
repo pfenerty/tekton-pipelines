@@ -1,21 +1,10 @@
 import { Construct } from 'constructs';
 import { GitHubTriggerBase, GitHubTriggerBaseProps } from './github-trigger-base';
 
+/** Props for {@link GitHubPullRequestTrigger}. Identical to {@link GitHubTriggerBaseProps}. */
 export type GitHubPullRequestTriggerProps = GitHubTriggerBaseProps;
 
-/**
- * Composes a TriggerBinding and TriggerTemplate for GitHub pull_request events.
- *
- * The binding extracts:
- *   gitrevision      - PR head SHA
- *   gitrepositoryurl - full HTTPS clone URL
- *   projectname      - repository name
- *   namespace        - target namespace (set to props.namespace)
- *
- * The template creates a PipelineRun referencing props.pipelineRef.
- *
- * Expose bindingRef / templateRef to wire into an EventListener trigger entry.
- */
+/** Trigger that fires on GitHub `pull_request` events. Extracts revision from `body.pull_request.head.sha`. */
 export class GitHubPullRequestTrigger extends GitHubTriggerBase {
   constructor(scope: Construct, id: string, props: GitHubPullRequestTriggerProps) {
     super(scope, id, props, {

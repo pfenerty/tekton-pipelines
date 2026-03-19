@@ -5,48 +5,49 @@ import {
   PIPELINE_RUN_API,
   DEFAULT_SERVICE_ACCOUNT,
   DEFAULT_WORKSPACE_STORAGE,
-  DEFAULT_APP_ROOT,
-  DEFAULT_BUILD_PATH,
   GITHUB_REPO_URL,
-  WS_WORKSPACE,
 } from '../constants';
 
+/** Properties shared by all GitHub trigger variants. */
 export interface GitHubTriggerBaseProps {
+  /** Kubernetes namespace for generated trigger resources. */
   namespace: string;
-  /** Name of the Pipeline to run on events. */
+  /** Name of the Pipeline resource this trigger starts. */
   pipelineRef: string;
-  /** Default value for app-root param passed to the PipelineRun (default: 'src'). */
-  appRoot?: string;
-  /** Default value for build-path param passed to the PipelineRun (default: 'cmd'). */
-  buildPath?: string;
-  /** Size of the PVC created per PipelineRun (default: '1Gi'). */
+  /** PVC size for the workspace volume claim. Defaults to `"1Gi"`. */
   workspaceStorageSize?: string;
-  /** ServiceAccount used to run PipelineRuns (default: 'tekton-triggers'). */
+  /** Service account for PipelineRun execution. Defaults to `"tekton-triggers"`. */
   serviceAccountName?: string;
-  /** Project name prefix for multi-tenant resource naming. */
+  /** Optional prefix prepended to all resource names. */
   namePrefix?: string;
+  /** Pipeline param name for the repository URL. Defaults to `"url"`. */
+  urlParam?: string;
+  /** Pipeline param name for the git revision. Defaults to `"revision"`. */
+  revisionParam?: string;
 }
 
+/** Event-specific configuration provided by trigger subclasses. */
 export interface GitHubTriggerConfig {
+  /** Name for the TriggerBinding resource. */
   bindingName: string;
+  /** Name for the TriggerTemplate resource. */
   templateName: string;
+  /** `generateName` prefix for PipelineRun resources. */
   pipelineRunGenerateName: string;
+  /** CEL/body expression that extracts the git revision from the webhook payload. */
   gitRevisionValue: string;
 }
 
 /**
- * Base class for GitHub event trigger constructs.
+ * Base class for GitHub webhook triggers.
  *
- * Creates a TriggerBinding and TriggerTemplate that react to a GitHub webhook
- * event and launch a PipelineRun. Subclasses provide event-specific config
- * (names, CEL expression for git revision) via the config parameter.
- *
- * Expose bindingRef / templateRef to wire into an EventListener trigger entry.
- *
- * @internal Prefer {@link GitHubPushTrigger} or {@link GitHubPullRequestTrigger}.
+ * Generates a TriggerBinding and TriggerTemplate pair. Subclasses provide
+ * event-specific configuration (binding name, revision extraction expression, etc.).
  */
 export class GitHubTriggerBase extends Construct {
+  /** Fully-qualified TriggerBinding resource name (includes prefix). */
   public readonly bindingRef: string;
+  /** Fully-qualified TriggerTemplate resource name (includes prefix). */
   public readonly templateRef: string;
 
   constructor(scope: Construct, id: string, props: GitHubTriggerBaseProps, config: GitHubTriggerConfig) {
@@ -58,8 +59,8 @@ export class GitHubTriggerBase extends Construct {
 
     const serviceAccountName = `${p}${props.serviceAccountName ?? DEFAULT_SERVICE_ACCOUNT}`;
     const workspaceStorage = props.workspaceStorageSize ?? DEFAULT_WORKSPACE_STORAGE;
-    const appRoot = props.appRoot ?? DEFAULT_APP_ROOT;
-    const buildPath = props.buildPath ?? DEFAULT_BUILD_PATH;
+    const urlParamName = props.urlParam ?? 'url';
+    const revisionParamName = props.revisionParam ?? 'revision';
 
     new ApiObject(this, 'binding', {
       apiVersion: TRIGGERS_API,
@@ -104,15 +105,13 @@ export class GitHubTriggerBase extends Construct {
               pipelineRef: { name: props.pipelineRef },
               serviceAccountName,
               params: [
-                { name: 'git-revision', value: '$(tt.params.gitrevision)' },
-                { name: 'git-url', value: '$(tt.params.gitrepositoryurl)' },
+                { name: revisionParamName, value: '$(tt.params.gitrevision)' },
+                { name: urlParamName, value: '$(tt.params.gitrepositoryurl)' },
                 { name: 'project-name', value: '$(tt.params.projectname)' },
-                { name: 'app-root', value: appRoot },
-                { name: 'build-path', value: buildPath },
               ],
               workspaces: [
                 {
-                  name: WS_WORKSPACE,
+                  name: 'workspace',
                   volumeClaimTemplate: {
                     spec: {
                       accessModes: ['ReadWriteOnce'],

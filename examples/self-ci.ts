@@ -8,8 +8,8 @@ import {
     RESTRICTED_STEP_SECURITY_CONTEXT,
 } from "../src";
 
-// ---- Variables ──────────────────────────────────────────────────────────────
-const golangVersion = "1.23.0";
+// --- Variables ───────────────────────────────────────────────────────────────
+const nodeVersion = "22";
 
 // ─── Shared workspace ────────────────────────────────────────────────────────
 const workspace = new Workspace({ name: "workspace" });
@@ -42,104 +42,55 @@ git checkout ${revisionParam}`,
     ],
 });
 
-const goTest = new Task({
-    name: "test-go",
+const npmTest = new Task({
+    name: "test-npm",
     params: [buildPathParam],
     workspaces: [workspace],
     needs: [gitClone],
     steps: [
         {
             name: "test",
-            image: `golang:${golangVersion}-alpine`,
+            image: `node:${nodeVersion}-alpine`,
             workingDir: `${workspace.path}/${buildPathParam}`,
-            command: ["go", "test", "./..."],
+            command: ["sh", "-c", "npm ci && npm test"],
         },
     ],
 });
 
-const goBuild = new Task({
-    name: "build-go",
+const npmBuild = new Task({
+    name: "build-npm",
     params: [buildPathParam],
     workspaces: [workspace],
     needs: [gitClone],
     steps: [
         {
             name: "build",
-            image: `golang:${golangVersion}-alpine`,
+            image: `node:${nodeVersion}-alpine`,
             workingDir: `${workspace.path}/${buildPathParam}`,
-            command: ["go", "build", "./..."],
-        },
-    ],
-});
-
-const sbom = new Task({
-    name: "generate-sbom",
-    params: [buildPathParam],
-    workspaces: [workspace],
-    needs: [gitClone],
-    steps: [
-        {
-            name: "sbom",
-            image: "anchore/syft:v1.11.0-debug",
-            workingDir: `${workspace.path}/${buildPathParam}`,
-            command: ["sh", "-c", "syft . -o cyclonedx-json > sbom.json"],
-        },
-    ],
-});
-
-const vulnScan = new Task({
-    name: "vuln-scan",
-    params: [buildPathParam],
-    workspaces: [workspace],
-    needs: [sbom],
-    steps: [
-        {
-            name: "scan",
-            image: "anchore/grype:v0.79.6-debug",
-            workingDir: `${workspace.path}/${buildPathParam}`,
-            command: ["sh", "-c", "grype sbom:sbom.json"],
-        },
-    ],
-});
-
-const lint = new Task({
-    name: "lint-go",
-    params: [buildPathParam],
-    workspaces: [workspace],
-    needs: [gitClone],
-    steps: [
-        {
-            name: "lint",
-            image: "golangci/golangci-lint:latest",
-            workingDir: `${workspace.path}/${buildPathParam}`,
-            command: ["golangci-lint", "run", "./..."],
+            command: ["sh", "-c", "npm ci && npm run build"],
         },
     ],
 });
 
 // ─── Pipelines ───────────────────────────────────────────────────────────────
 const pushPipeline = new Pipeline({
-    name: "go-push",
+    name: "npm-push",
     triggers: [TRIGGER_EVENTS.PUSH],
-    tasks: [goTest, goBuild, sbom, vulnScan],
+    tasks: [npmTest],
 });
 
 const prPipeline = new Pipeline({
-    name: "go-pull-request",
+    name: "npm-pull-request",
     triggers: [TRIGGER_EVENTS.PULL_REQUEST],
-    tasks: [goTest, sbom, vulnScan],
-});
-
-const lintPipeline = new Pipeline({
-    name: "go-lint",
-    tasks: [lint],
+    tasks: [npmTest, npmBuild],
 });
 
 // ─── Synthesize ──────────────────────────────────────────────────────────────
 new TektonProject({
-    name: "homelab",
-    namespace: "tekton-builds",
-    pipelines: [pushPipeline, prPipeline, lintPipeline],
+    name: "tektonic",
+    namespace: "tektonic-ci",
+    pipelines: [pushPipeline, prPipeline],
+    outdir: "ci-pipeline",
     webhookSecretRef: {
         secretName: "github-webhook-secret",
         secretKey: "secret",
