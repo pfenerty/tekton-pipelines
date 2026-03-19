@@ -90,6 +90,22 @@ describe('TektonProject', () => {
     }).not.toThrow();
   });
 
+  it('includes finally tasks in synthesized resources', () => {
+    const finalTask = new Task({
+      name: 'final-report',
+      steps: [{ name: 'report', image: 'alpine' }],
+    });
+    // Should not throw — finally task is included in unique task collection
+    expect(() => {
+      new TektonProject({
+        namespace: 'ns',
+        pipelines: [
+          new Pipeline({ name: 'ci', tasks: [test], finallyTasks: [finalTask] }),
+        ],
+      });
+    }).not.toThrow();
+  });
+
   it('deduplicates tasks shared across pipelines', () => {
     // Both pipelines share clone and test — should not throw duplicate errors
     expect(() => {

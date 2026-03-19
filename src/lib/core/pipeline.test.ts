@@ -136,6 +136,57 @@ describe('Pipeline', () => {
     expect(cloneTask.taskRef.name).toBe('myapp-clone');
   });
 
+  it('includes finally tasks in inferParams and inferWorkspaces', () => {
+    const statusParam = new Param({ name: 'status-param' });
+    const statusWorkspace = new Workspace({ name: 'status-ws' });
+    const statusTask = new Task({
+      name: 'status',
+      params: [statusParam],
+      workspaces: [statusWorkspace],
+      steps: [{ name: 'report', image: 'alpine' }],
+    });
+    const pipeline = new Pipeline({
+      name: 'ci',
+      tasks: [test],
+      finallyTasks: [statusTask],
+    });
+    const paramNames = pipeline.inferParams().map((p: any) => p.name);
+    expect(paramNames).toContain('status-param');
+    expect(paramNames).toContain('url'); // from regular tasks
+    const wsNames = pipeline.inferWorkspaces().map((w: any) => w.name);
+    expect(wsNames).toContain('status-ws');
+    expect(wsNames).toContain('workspace');
+  });
+
+  it('_build() produces finally block in Pipeline spec', () => {
+    const finalTask = new Task({
+      name: 'final',
+      steps: [{ name: 'done', image: 'alpine' }],
+    });
+    const pipeline = new Pipeline({
+      name: 'ci',
+      tasks: [test],
+      finallyTasks: [finalTask],
+    });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const manifest = chart.toJson()[0];
+    expect(manifest.spec.finally).toHaveLength(1);
+    expect(manifest.spec.finally[0].name).toBe('final');
+    // finally tasks should not have runAfter
+    expect(manifest.spec.finally[0].runAfter).toBeUndefined();
+  });
+
+  it('_build() omits finally when no finally tasks', () => {
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const manifest = chart.toJson()[0];
+    expect(manifest.spec.finally).toBeUndefined();
+  });
+
   it('_build() includes extra params', () => {
     const pipeline = new Pipeline({ name: 'ci', tasks: [test] });
     const app = new App();

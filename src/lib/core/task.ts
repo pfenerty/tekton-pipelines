@@ -19,7 +19,11 @@ export interface TaskStepSpec {
   /** Working directory for the step. */
   workingDir?: string;
   /** Environment variables injected into the step container. */
-  env?: { name: string; value: string }[];
+  env?: {
+    name: string;
+    value?: string;
+    valueFrom?: { secretKeyRef: { name: string; key: string } };
+  }[];
 }
 
 /** Options for constructing a {@link Task}. */
