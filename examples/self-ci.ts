@@ -37,6 +37,7 @@ const gitClone = new Task({
             script: `#!/bin/sh
 set -e
 git clone -v ${urlParam} .
+git config --global --add safe.directory ${workspace.path}
 git checkout ${revisionParam}`,
         },
     ],
