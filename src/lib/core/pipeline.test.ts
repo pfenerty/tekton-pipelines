@@ -1,0 +1,200 @@
+import { describe, it, expect } from 'vitest';
+import { App, Chart } from 'cdk8s';
+import { Pipeline } from './pipeline';
+import { Task } from './task';
+import { Param } from './param';
+import { Workspace } from './workspace';
+import { TRIGGER_EVENTS } from './trigger-events';
+
+describe('Pipeline', () => {
+  const workspace = new Workspace({ name: 'workspace' });
+  const urlParam = new Param({ name: 'url' });
+  const revParam = new Param({ name: 'revision' });
+  const pathParam = new Param({ name: 'build-path', default: './' });
+
+  const clone = new Task({
+    name: 'clone',
+    params: [urlParam, revParam],
+    workspaces: [workspace],
+    steps: [{ name: 'clone', image: 'git' }],
+  });
+
+  const test = new Task({
+    name: 'test',
+    params: [pathParam],
+    workspaces: [workspace],
+    needs: [clone],
+    steps: [{ name: 'test', image: 'node' }],
+  });
+
+  const build = new Task({
+    name: 'build',
+    params: [pathParam],
+    workspaces: [workspace],
+    needs: [clone],
+    steps: [{ name: 'build', image: 'node' }],
+  });
+
+  it('auto-discovers tasks from needs graph', () => {
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test] });
+    expect(pipeline.allTasks).toContain(clone);
+    expect(pipeline.allTasks).toContain(test);
+    expect(pipeline.allTasks).toHaveLength(2);
+  });
+
+  it('deduplicates inferred params by name', () => {
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test, build] });
+    const params = pipeline.inferParams();
+    const names = params.map((p: any) => p.name);
+    expect(names.filter((n: string) => n === 'build-path')).toHaveLength(1);
+    expect(names).toContain('url');
+    expect(names).toContain('revision');
+    expect(names).toContain('build-path');
+  });
+
+  it('deduplicates inferred workspaces by name', () => {
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test, build] });
+    const workspaces = pipeline.inferWorkspaces();
+    expect(workspaces).toHaveLength(1);
+    expect((workspaces[0] as any).name).toBe('workspace');
+  });
+
+  it('merges extra params with task-inferred params', () => {
+    const extra = new Param({ name: 'extra' });
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test], params: [extra] });
+    const params = pipeline.inferParams();
+    const names = params.map((p: any) => p.name);
+    expect(names).toContain('extra');
+    expect(names).toContain('url');
+  });
+
+  it('names from single trigger', () => {
+    const pipeline = new Pipeline({ triggers: [TRIGGER_EVENTS.PUSH], tasks: [test] });
+    expect(pipeline.name).toBe('push-pipeline');
+  });
+
+  it('throws on duplicate task names', () => {
+    const dup = new Task({ name: 'clone', steps: [{ name: 's', image: 'alpine' }] });
+    expect(() => {
+      const p = new Pipeline({ name: 'bad', tasks: [clone, dup] });
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      p._build(chart, 'pipeline', 'ns');
+    }).toThrow(/duplicate task name/);
+  });
+
+  it('throws on cycle', () => {
+    const a = new Task({ name: 'a', steps: [{ name: 's', image: 'alpine' }] });
+    const b = new Task({ name: 'b', needs: [a], steps: [{ name: 's', image: 'alpine' }] });
+    // Manually create a cycle by mutating (normally impossible via constructor)
+    (a as any).needs = [b];
+    expect(() => {
+      const p = new Pipeline({ name: 'cycle', tasks: [a, b] });
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      p._build(chart, 'pipeline', 'ns');
+    }).toThrow(/cycle/);
+  });
+
+  it('_build() produces valid Pipeline resource', () => {
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test, build] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'my-ns');
+    const manifest = chart.toJson()[0];
+    expect(manifest.apiVersion).toBe('tekton.dev/v1');
+    expect(manifest.kind).toBe('Pipeline');
+    expect(manifest.metadata.name).toBe('ci');
+    expect(manifest.metadata.namespace).toBe('my-ns');
+
+    // Tasks should include clone (auto-discovered), test, build
+    const taskNames = manifest.spec.tasks.map((t: any) => t.name);
+    expect(taskNames).toContain('clone');
+    expect(taskNames).toContain('test');
+    expect(taskNames).toContain('build');
+
+    // test and build should runAfter clone
+    const testTask = manifest.spec.tasks.find((t: any) => t.name === 'test');
+    expect(testTask.runAfter).toEqual(['clone']);
+    const buildTask = manifest.spec.tasks.find((t: any) => t.name === 'build');
+    expect(buildTask.runAfter).toEqual(['clone']);
+
+    // clone should have no runAfter
+    const cloneTask = manifest.spec.tasks.find((t: any) => t.name === 'clone');
+    expect(cloneTask.runAfter).toBeUndefined();
+  });
+
+  it('_build() applies namePrefix', () => {
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns', [], 'myapp');
+    const manifest = chart.toJson()[0];
+    expect(manifest.metadata.name).toBe('myapp-ci');
+    // taskRefs should also be prefixed
+    const cloneTask = manifest.spec.tasks.find((t: any) => t.name === 'clone');
+    expect(cloneTask.taskRef.name).toBe('myapp-clone');
+  });
+
+  it('includes finally tasks in inferParams and inferWorkspaces', () => {
+    const statusParam = new Param({ name: 'status-param' });
+    const statusWorkspace = new Workspace({ name: 'status-ws' });
+    const statusTask = new Task({
+      name: 'status',
+      params: [statusParam],
+      workspaces: [statusWorkspace],
+      steps: [{ name: 'report', image: 'alpine' }],
+    });
+    const pipeline = new Pipeline({
+      name: 'ci',
+      tasks: [test],
+      finallyTasks: [statusTask],
+    });
+    const paramNames = pipeline.inferParams().map((p: any) => p.name);
+    expect(paramNames).toContain('status-param');
+    expect(paramNames).toContain('url'); // from regular tasks
+    const wsNames = pipeline.inferWorkspaces().map((w: any) => w.name);
+    expect(wsNames).toContain('status-ws');
+    expect(wsNames).toContain('workspace');
+  });
+
+  it('_build() produces finally block in Pipeline spec', () => {
+    const finalTask = new Task({
+      name: 'final',
+      steps: [{ name: 'done', image: 'alpine' }],
+    });
+    const pipeline = new Pipeline({
+      name: 'ci',
+      tasks: [test],
+      finallyTasks: [finalTask],
+    });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const manifest = chart.toJson()[0];
+    expect(manifest.spec.finally).toHaveLength(1);
+    expect(manifest.spec.finally[0].name).toBe('final');
+    // finally tasks should not have runAfter
+    expect(manifest.spec.finally[0].runAfter).toBeUndefined();
+  });
+
+  it('_build() omits finally when no finally tasks', () => {
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const manifest = chart.toJson()[0];
+    expect(manifest.spec.finally).toBeUndefined();
+  });
+
+  it('_build() includes extra params', () => {
+    const pipeline = new Pipeline({ name: 'ci', tasks: [test] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns', [{ name: 'project-name', type: 'string' }]);
+    const manifest = chart.toJson()[0];
+    const paramNames = manifest.spec.params.map((p: any) => p.name);
+    expect(paramNames).toContain('project-name');
+    expect(paramNames).toContain('url');
+  });
+});
