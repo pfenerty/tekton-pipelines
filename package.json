@@ -44,8 +44,8 @@
     "constructs": "^10.3.0",
     "ts-node": "^10.9.0",
     "typescript": "^5.4.0",
+    "vitest": "^4.0.0",
     "typedoc": "^0.28.0",
-    "typedoc-plugin-markdown": "^4.0.0",
-    "vitest": "^2.0.0"
+    "typedoc-plugin-markdown": "^4.0.0"
   }
 }
