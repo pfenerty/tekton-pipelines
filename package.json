@@ -1,7 +1,12 @@
 {
-  "name": "@pfenerty/tekton-pipelines",
+  "name": "@pfenerty/tektonic",
   "version": "1.0.0",
   "description": "CDK8s constructs for composing Tekton pipelines as code",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pfenerty/tektonic.git"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -22,10 +27,10 @@
     "build:watch": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "docs:api": "typedoc",
     "synth": "npx cdk8s synth",
     "import": "npx cdk8s import",
-    "prepare": "npm run build",
-    "prepublishOnly": "npm run build"
+    "prepare": "npm run build"
   },
   "peerDependencies": {
     "cdk8s": ">=2.0.0",
@@ -39,6 +44,8 @@
     "constructs": "^10.3.0",
     "ts-node": "^10.9.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.0.0"
+    "vitest": "^4.0.0",
+    "typedoc": "^0.28.0",
+    "typedoc-plugin-markdown": "^4.0.0"
   }
 }

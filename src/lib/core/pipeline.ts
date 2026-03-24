@@ -1,41 +1,46 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
-import { PipelineTask } from '../tasks/pipeline-task';
-import { PipelineParamSpec, PipelineWorkspaceDeclaration } from '../../types';
 import { TEKTON_API_V1 } from '../constants';
-import { Job } from './job';
+import { Param } from './param';
+import { Workspace } from './workspace';
+import { Task } from './task';
 import { TRIGGER_EVENTS } from './trigger-events';
 
+/** Options for constructing a {@link Pipeline}. */
 export interface PipelineOptions {
+  /**
+   * Pipeline name. Auto-generated from the trigger type when omitted
+   * (e.g. `"push-pipeline"` for a single push trigger).
+   */
   name?: string;
+  /** Trigger events that should start this pipeline (used by {@link TektonProject} to wire webhooks). */
   triggers?: TRIGGER_EVENTS[];
-  jobs: Job[];
+  /** Top-level tasks. Transitive dependencies are auto-discovered via `task.needs`. */
+  tasks: Task[];
+  /** Tasks that run unconditionally after all regular tasks complete or fail. */
+  finallyTasks?: Task[];
+  /** Additional pipeline-level params not tied to any specific task. */
+  params?: Param[];
 }
 
-function deduplicateParams(params: PipelineParamSpec[]): PipelineParamSpec[] {
-  const seen = new Map<string, PipelineParamSpec>();
-  for (const p of params) {
-    if (!seen.has(p.name)) {
-      seen.set(p.name, p);
-    }
-  }
-  return [...seen.values()];
-}
-
-function deduplicateWorkspaces(workspaces: PipelineWorkspaceDeclaration[]): PipelineWorkspaceDeclaration[] {
-  const seen = new Map<string, PipelineWorkspaceDeclaration>();
-  for (const w of workspaces) {
-    if (!seen.has(w.name)) {
-      seen.set(w.name, w);
-    }
-  }
-  return [...seen.values()];
-}
-
+/**
+ * A Tekton Pipeline definition.
+ *
+ * Automatically discovers all transitive task dependencies, infers the union of
+ * params and workspaces from all tasks, validates the dependency graph, and
+ * topologically sorts tasks for execution.
+ */
 export class Pipeline {
   readonly name: string;
+  /** Trigger events associated with this pipeline. */
   readonly triggers: TRIGGER_EVENTS[];
-  readonly jobs: Job[];
+  /** Top-level tasks provided at construction. */
+  readonly tasks: Task[];
+  /** All tasks including transitive dependencies discovered via `task.needs`. */
+  readonly allTasks: Task[];
+  /** Tasks that run unconditionally after all regular tasks complete or fail. */
+  readonly finallyTasks: Task[];
+  private readonly extraParams: Param[];
 
   private static _counter = 0;
 
@@ -48,59 +53,58 @@ export class Pipeline {
       this.name = `pipeline-${Pipeline._counter++}`;
     }
     this.triggers = opts.triggers ?? [];
-    this.jobs = opts.jobs;
+    this.tasks = opts.tasks;
+    this.allTasks = this.discoverAllTasks(opts.tasks);
+    this.finallyTasks = opts.finallyTasks ?? [];
+    this.extraParams = opts.params ?? [];
   }
 
-  /** Union of all pipeline-level params required by jobs. */
-  inferParams(): PipelineParamSpec[] {
-    const all: PipelineParamSpec[] = [];
-    for (const job of this.jobs) {
-      all.push(...job._internals.params);
+  private discoverAllTasks(tasks: Task[]): Task[] {
+    const seen = new Set<Task>();
+    const visit = (t: Task) => {
+      if (seen.has(t)) return;
+      seen.add(t);
+      for (const dep of t.needs) visit(dep);
+    };
+    for (const t of tasks) visit(t);
+    return [...seen];
+  }
+
+  /** Returns the de-duplicated union of all task params plus any extra pipeline-level params. */
+  inferParams(): Record<string, unknown>[] {
+    const seen = new Map<string, Param>();
+    for (const task of [...this.allTasks, ...this.finallyTasks]) {
+      for (const p of task.params) {
+        if (!seen.has(p.name) && !p.pipelineExpression) seen.set(p.name, p);
+      }
     }
-    return deduplicateParams(all);
-  }
-
-  /** Union of all pipeline-level workspaces required by jobs. */
-  inferWorkspaces(): PipelineWorkspaceDeclaration[] {
-    const all: PipelineWorkspaceDeclaration[] = [];
-    for (const job of this.jobs) {
-      all.push(...job._internals.workspaces);
+    for (const p of this.extraParams) {
+      if (!seen.has(p.name)) seen.set(p.name, p);
     }
-    return deduplicateWorkspaces(all);
+    return [...seen.values()].map(p => p.toSpec());
   }
 
-  /**
-   * @internal Build the Tekton Pipeline ApiObject.
-   * @param extraParams Additional params to include (e.g. trigger infrastructure params).
-   */
+  /** Returns the de-duplicated union of all task workspaces. */
+  inferWorkspaces(): Record<string, unknown>[] {
+    const seen = new Map<string, Workspace>();
+    for (const task of [...this.allTasks, ...this.finallyTasks]) {
+      for (const w of task.workspaces) {
+        if (!seen.has(w.name)) seen.set(w.name, w);
+      }
+    }
+    return [...seen.values()].map(w => w.toSpec());
+  }
+
+  /** @internal Synthesizes the Pipeline resource. Called by {@link TektonProject}. */
   _build(
     scope: Construct,
     id: string,
     namespace: string,
-    extraParams?: PipelineParamSpec[],
+    extraParams?: Record<string, unknown>[],
     namePrefix?: string,
   ): void {
     this.validate();
-
     const sorted = this.topoSort();
-    const taskMap = new Map<Job, PipelineTask>();
-
-    for (const job of sorted) {
-      const runAfter = job.needs.map(dep => {
-        const pt = taskMap.get(dep);
-        if (!pt) {
-          throw new Error(
-            `Pipeline '${this.name}': dependency '${dep.name}' was not built before '${job.name}'`,
-          );
-        }
-        return pt;
-      });
-      taskMap.set(job, job._internals.createPipelineTask(runAfter));
-    }
-
-    const jobParams = this.inferParams();
-    const allParams = deduplicateParams([...(extraParams ?? []), ...jobParams]);
-    const workspaces = this.inferWorkspaces();
 
     new ApiObject(scope, id, {
       apiVersion: TEKTON_API_V1,
@@ -110,63 +114,77 @@ export class Pipeline {
         namespace,
       },
       spec: {
-        params: allParams,
-        workspaces,
-        tasks: sorted.map(job => {
-          const spec = taskMap.get(job)!.toSpec();
-          if (namePrefix && job._internals.createTaskResource && (spec as any).taskRef) {
-            (spec as any).taskRef.name = `${namePrefix}-${(spec as any).taskRef.name}`;
-          }
-          return spec;
+        params: this.deduplicateParams([...(extraParams ?? []), ...this.inferParams()]),
+        workspaces: this.inferWorkspaces(),
+        tasks: sorted.map(task => {
+          const runAfterNames = task.needs
+            .filter(dep => this.allTasks.includes(dep))
+            .map(dep => dep.name);
+          return task._toPipelineTaskSpec(runAfterNames, namePrefix);
+        }),
+        ...(this.finallyTasks.length > 0 && {
+          finally: this.finallyTasks.map(task =>
+            task._toPipelineTaskSpec([], namePrefix),
+          ),
         }),
       },
     });
   }
 
+  private deduplicateParams(params: Record<string, unknown>[]): Record<string, unknown>[] {
+    const seen = new Set<string>();
+    return params.filter(p => {
+      const name = p.name as string;
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
+  }
+
   private validate(): void {
-    const jobSet = new Set(this.jobs);
+    const taskSet = new Set(this.allTasks);
     const nameSet = new Set<string>();
 
-    for (const job of this.jobs) {
-      if (nameSet.has(job.name)) {
+    for (const task of this.allTasks) {
+      if (nameSet.has(task.name)) {
         throw new Error(
-          `Pipeline '${this.name}': duplicate job name '${job.name}'`,
+          `Pipeline '${this.name}': duplicate task name '${task.name}'`,
         );
       }
-      nameSet.add(job.name);
+      nameSet.add(task.name);
 
-      for (const dep of job.needs) {
-        if (!jobSet.has(dep)) {
+      for (const dep of task.needs) {
+        if (!taskSet.has(dep)) {
           throw new Error(
-            `Pipeline '${this.name}': job '${job.name}' depends on '${dep.name}' which is not in the pipeline's jobs array`,
+            `Pipeline '${this.name}': task '${task.name}' depends on '${dep.name}' which is not in the pipeline`,
           );
         }
       }
     }
   }
 
-  private topoSort(): Job[] {
-    const visited = new Set<Job>();
-    const visiting = new Set<Job>();
-    const result: Job[] = [];
+  private topoSort(): Task[] {
+    const visited = new Set<Task>();
+    const visiting = new Set<Task>();
+    const result: Task[] = [];
 
-    const visit = (job: Job): void => {
-      if (visited.has(job)) return;
-      if (visiting.has(job)) {
+    const visit = (task: Task): void => {
+      if (visited.has(task)) return;
+      if (visiting.has(task)) {
         throw new Error(
-          `Pipeline '${this.name}': cycle detected involving job '${job.name}'`,
+          `Pipeline '${this.name}': cycle detected involving task '${task.name}'`,
         );
       }
-      visiting.add(job);
-      for (const dep of job.needs) {
+      visiting.add(task);
+      for (const dep of task.needs) {
         visit(dep);
       }
-      visiting.delete(job);
-      visited.add(job);
-      result.push(job);
+      visiting.delete(task);
+      visited.add(task);
+      result.push(task);
     };
 
-    for (const job of this.jobs) visit(job);
+    for (const task of this.allTasks) visit(task);
     return result;
   }
 }

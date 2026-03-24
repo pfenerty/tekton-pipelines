@@ -2,34 +2,33 @@ import { Construct } from 'constructs';
 import { ApiObject, Chart, ChartProps } from 'cdk8s';
 import { GitHubPushTrigger } from '../lib/triggers/github-push.trigger';
 import { GitHubPullRequestTrigger } from '../lib/triggers/github-pull-request.trigger';
+import { GitHubTagTrigger } from '../lib/triggers/github-tag.trigger';
 
+/** Properties for the {@link TektonInfraChart}. */
 export interface TektonInfraChartProps extends ChartProps {
+  /** Kubernetes namespace for all infrastructure resources. */
   namespace: string;
-  /** Name of the pipeline to run on push events (default: 'go-push'). */
+  /** Pipeline name referenced by the push trigger. */
   pushPipelineRef?: string;
-  /** Name of the pipeline to run on pull_request events (default: 'go-merge-request'). */
+  /** Pipeline name referenced by the pull request trigger. */
   pullRequestPipelineRef?: string;
-  /** Default app-root for trigger templates (default: 'src'). */
-  appRoot?: string;
-  /** Default build-path for trigger templates (default: 'cmd'). */
-  buildPath?: string;
-  /** Project name prefix for multi-tenant resource naming. */
+  /** Pipeline name referenced by the tag trigger. */
+  tagPipelineRef?: string;
+  /** Optional prefix prepended to all resource names. */
   namePrefix?: string;
-  /** Reference to an existing K8s Secret for GitHub webhook HMAC validation. */
+  /** Kubernetes Secret reference for GitHub webhook validation. */
   webhookSecretRef?: { secretName: string; secretKey: string };
+  /** Pipeline param name for the repository URL. Defaults to `"url"`. */
+  urlParam?: string;
+  /** Pipeline param name for the git revision. Defaults to `"revision"`. */
+  revisionParam?: string;
 }
 
 /**
- * Chart that provisions the shared Tekton infrastructure:
- *   - ServiceAccount (tekton-triggers)
- *   - RoleBinding  → ClusterRole tekton-triggers-eventlistener-roles
- *   - ClusterRoleBinding → ClusterRole tekton-triggers-eventlistener-clusterroles
- *   - GitHub push TriggerBinding + TriggerTemplate
- *   - GitHub pull request TriggerBinding + TriggerTemplate
- *   - EventListener wiring all triggers together
- *
- * To add a new event source, create a new trigger construct and add an entry
- * to the EventListener's triggers array in this chart.
+ * cdk8s Chart that generates the shared trigger infrastructure:
+ * - ServiceAccount and RBAC (RoleBinding + ClusterRoleBinding)
+ * - TriggerBindings and TriggerTemplates for push, PR, and tag events
+ * - EventListener with GitHub interceptors and CEL filters
  */
 export class TektonInfraChart extends Chart {
   constructor(scope: Construct, id: string, props: TektonInfraChartProps) {
@@ -73,23 +72,86 @@ export class TektonInfraChart extends Chart {
 
     // ── Triggers ──────────────────────────────────────────────────────────────
 
-    const pushTrigger = new GitHubPushTrigger(this, 'github-push-trigger', {
+    const triggerProps = {
       namespace,
       namePrefix: props.namePrefix,
-      pipelineRef: props.pushPipelineRef ?? 'go-push',
-      appRoot: props.appRoot,
-      buildPath: props.buildPath,
+      urlParam: props.urlParam,
+      revisionParam: props.revisionParam,
+    };
+
+    const pushTrigger = new GitHubPushTrigger(this, 'github-push-trigger', {
+      ...triggerProps,
+      pipelineRef: props.pushPipelineRef ?? 'push-pipeline',
     });
 
     const prTrigger = new GitHubPullRequestTrigger(this, 'github-pr-trigger', {
-      namespace,
-      namePrefix: props.namePrefix,
-      pipelineRef: props.pullRequestPipelineRef ?? 'go-merge-request',
-      appRoot: props.appRoot,
-      buildPath: props.buildPath,
+      ...triggerProps,
+      pipelineRef: props.pullRequestPipelineRef ?? 'pull-request-pipeline',
     });
 
     // ── EventListener ─────────────────────────────────────────────────────────
+
+    const triggers: Record<string, unknown>[] = [
+      {
+        bindings: [{ kind: 'TriggerBinding', ref: pushTrigger.bindingRef }],
+        interceptors: [
+          {
+            ref: { kind: 'ClusterInterceptor', name: 'github' },
+            params: [
+              { name: 'eventTypes', value: ['push'] },
+              ...(props.webhookSecretRef ? [{ name: 'secretRef', value: props.webhookSecretRef }] : []),
+            ],
+          },
+          ...(props.tagPipelineRef ? [{
+            ref: { kind: 'ClusterInterceptor', name: 'cel' },
+            params: [
+              { name: 'filter', value: "!body.ref.startsWith('refs/tags/')" },
+            ],
+          }] : []),
+        ],
+        template: { ref: pushTrigger.templateRef },
+      },
+      {
+        bindings: [{ kind: 'TriggerBinding', ref: prTrigger.bindingRef }],
+        interceptors: [
+          {
+            ref: { kind: 'ClusterInterceptor', name: 'github' },
+            params: [
+              { name: 'eventTypes', value: ['pull_request'] },
+              ...(props.webhookSecretRef ? [{ name: 'secretRef', value: props.webhookSecretRef }] : []),
+            ],
+          },
+        ],
+        template: { ref: prTrigger.templateRef },
+      },
+    ];
+
+    if (props.tagPipelineRef) {
+      const tagTrigger = new GitHubTagTrigger(this, 'github-tag-trigger', {
+        ...triggerProps,
+        pipelineRef: props.tagPipelineRef,
+      });
+
+      triggers.push({
+        bindings: [{ kind: 'TriggerBinding', ref: tagTrigger.bindingRef }],
+        interceptors: [
+          {
+            ref: { kind: 'ClusterInterceptor', name: 'github' },
+            params: [
+              { name: 'eventTypes', value: ['push'] },
+              ...(props.webhookSecretRef ? [{ name: 'secretRef', value: props.webhookSecretRef }] : []),
+            ],
+          },
+          {
+            ref: { kind: 'ClusterInterceptor', name: 'cel' },
+            params: [
+              { name: 'filter', value: "body.ref.startsWith('refs/tags/')" },
+            ],
+          },
+        ],
+        template: { ref: tagTrigger.templateRef },
+      });
+    }
 
     new ApiObject(this, 'event-listener', {
       apiVersion: 'triggers.tekton.dev/v1beta1',
@@ -97,34 +159,7 @@ export class TektonInfraChart extends Chart {
       metadata: { name: `${p}github-listener`, namespace },
       spec: {
         serviceAccountName,
-        triggers: [
-          {
-            bindings: [{ kind: 'TriggerBinding', ref: pushTrigger.bindingRef }],
-            interceptors: [
-              {
-                ref: { kind: 'ClusterInterceptor', name: 'github' },
-                params: [
-                  { name: 'eventTypes', value: ['push'] },
-                  ...(props.webhookSecretRef ? [{ name: 'secretRef', value: props.webhookSecretRef }] : []),
-                ],
-              },
-            ],
-            template: { ref: pushTrigger.templateRef },
-          },
-          {
-            bindings: [{ kind: 'TriggerBinding', ref: prTrigger.bindingRef }],
-            interceptors: [
-              {
-                ref: { kind: 'ClusterInterceptor', name: 'github' },
-                params: [
-                  { name: 'eventTypes', value: ['pull_request'] },
-                  ...(props.webhookSecretRef ? [{ name: 'secretRef', value: props.webhookSecretRef }] : []),
-                ],
-              },
-            ],
-            template: { ref: prTrigger.templateRef },
-          },
-        ],
+        triggers,
       },
     });
   }
