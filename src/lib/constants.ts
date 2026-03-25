@@ -33,3 +33,13 @@ export const RESTRICTED_STEP_SECURITY_CONTEXT = {
   runAsNonRoot: true,
   seccompProfile: { type: 'RuntimeDefault' },
 } as const;
+
+/**
+ * Default CPU/memory requests and limits applied to all task steps via stepTemplate.
+ * Override per-task via `stepTemplate: { resources: { ... } }` or per-step via the
+ * `resources` field on `TaskStepSpec`.
+ */
+export const DEFAULT_STEP_RESOURCES = {
+  requests: { cpu: '100m', memory: '128Mi' },
+  limits: { cpu: '1', memory: '512Mi' },
+} as const;

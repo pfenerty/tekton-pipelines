@@ -1,6 +1,6 @@
 import { Construct } from 'constructs';
 import { ApiObject } from 'cdk8s';
-import { TEKTON_API_V1, DEFAULT_STEP_SECURITY_CONTEXT } from '../constants';
+import { TEKTON_API_V1, DEFAULT_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES } from '../constants';
 import { Param } from './param';
 import { Workspace } from './workspace';
 
@@ -26,6 +26,11 @@ export interface TaskStepSpec {
   }[];
   /** Controls behaviour when this step fails. `continue` lets subsequent steps run. */
   onError?: 'continue' | 'stopAndFail';
+  /** CPU/memory requests and limits for this step (overrides stepTemplate resources). */
+  resources?: {
+    requests?: { cpu?: string; memory?: string };
+    limits?: { cpu?: string; memory?: string };
+  };
 }
 
 /** Options for constructing a {@link Task}. */
@@ -83,6 +88,7 @@ export class Task {
       spec: {
         stepTemplate: {
           securityContext: DEFAULT_STEP_SECURITY_CONTEXT,
+          resources: DEFAULT_STEP_RESOURCES,
           ...(this.stepTemplate ?? {}),
         },
         ...(this.params.length > 0 && { params: this.params.map(p => p.toSpec()) }),

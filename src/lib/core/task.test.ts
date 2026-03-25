@@ -3,7 +3,7 @@ import { App, Chart } from 'cdk8s';
 import { Task } from './task';
 import { Param } from './param';
 import { Workspace } from './workspace';
-import { RESTRICTED_STEP_SECURITY_CONTEXT } from '../constants';
+import { RESTRICTED_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES } from '../constants';
 
 describe('Task', () => {
   const workspace = new Workspace({ name: 'workspace' });
@@ -50,6 +50,40 @@ describe('Task', () => {
       expect(manifest.spec.params).toEqual([{ name: 'url', type: 'string' }]);
       expect(manifest.spec.workspaces).toEqual([{ name: 'workspace' }]);
       expect(manifest.spec.stepTemplate.securityContext.allowPrivilegeEscalation).toBe(false);
+    });
+
+    it('applies default resource requests and limits', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({ name: 'bare', steps: [{ name: 's', image: 'alpine' }] });
+      t.synth(chart, 'ns');
+      const manifest = chart.toJson()[0];
+      expect(manifest.spec.stepTemplate.resources).toEqual(DEFAULT_STEP_RESOURCES);
+    });
+
+    it('custom stepTemplate resources replace default', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({
+        name: 'heavy',
+        steps: [{ name: 's', image: 'alpine' }],
+        stepTemplate: { resources: { limits: { cpu: '4', memory: '4Gi' } } },
+      });
+      t.synth(chart, 'ns');
+      const manifest = chart.toJson()[0];
+      expect(manifest.spec.stepTemplate.resources).toEqual({ limits: { cpu: '4', memory: '4Gi' } });
+    });
+
+    it('passes per-step resources through to step spec', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({
+        name: 'per-step',
+        steps: [{ name: 'build', image: 'golang', resources: { limits: { memory: '2Gi' } } }],
+      });
+      t.synth(chart, 'ns');
+      const manifest = chart.toJson()[0];
+      expect(manifest.spec.steps[0].resources).toEqual({ limits: { memory: '2Gi' } });
     });
 
     it('merges custom stepTemplate over defaults', () => {
