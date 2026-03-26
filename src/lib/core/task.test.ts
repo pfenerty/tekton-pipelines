@@ -4,6 +4,7 @@ import { Task } from './task';
 import { Param } from './param';
 import { Workspace } from './workspace';
 import { RESTRICTED_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES } from '../constants';
+import { GitHubStatusReporter } from '../reporters/github-status-reporter';
 
 describe('Task', () => {
   const workspace = new Workspace({ name: 'workspace' });
@@ -30,6 +31,35 @@ describe('Task', () => {
     expect(t.needs).toEqual([]);
     expect(t.params).toEqual([]);
     expect(t.workspaces).toEqual([]);
+  });
+
+  it('auto-merges statusReporter.requiredParams into params', () => {
+    const reporter = new GitHubStatusReporter();
+    const buildPath = new Param({ name: 'build-path', default: './' });
+    const t = new Task({
+      name: 'test',
+      params: [buildPath],
+      statusReporter: reporter,
+      steps: [{ name: 's', image: 'alpine' }],
+    });
+    const paramNames = t.params.map(p => p.name);
+    expect(paramNames).toContain('build-path');
+    expect(paramNames).toContain('revision');
+    expect(paramNames).toContain('repo-full-name');
+  });
+
+  it('user-declared params take precedence over statusReporter params on name collision', () => {
+    const customRevision = new Param({ name: 'revision', type: 'string', description: 'custom' });
+    const reporter = new GitHubStatusReporter();
+    const t = new Task({
+      name: 'test',
+      params: [customRevision],
+      statusReporter: reporter,
+      steps: [{ name: 's', image: 'alpine' }],
+    });
+    const revParam = t.params.find(p => p.name === 'revision');
+    expect(revParam?.description).toBe('custom');
+    expect(t.params.filter(p => p.name === 'revision')).toHaveLength(1);
   });
 
   describe('synth()', () => {

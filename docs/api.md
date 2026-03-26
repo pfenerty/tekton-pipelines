@@ -75,18 +75,22 @@ All steps inherit a secure-by-default `stepTemplate` that drops all capabilities
 | `args` | `string[]` | — | Arguments to entrypoint |
 | `script` | `string` | — | Inline script |
 | `workingDir` | `string` | — | Working directory |
-| `env` | `{ name: string; value: string }[]` | — | Environment variables |
+| `env` | `{ name: string; value?: string; valueFrom?: { secretKeyRef: { name: string; key: string } } }[]` | — | Environment variables (supports literal values and Secret references) |
+| `onError` | `'continue' \| 'stopAndFail'` | `'stopAndFail'` | Whether subsequent steps run when this step fails. Use `'continue'` to let a reporter step always execute. |
+| `computeResources` | `{ requests?: { cpu?: string; memory?: string }; limits?: { cpu?: string; memory?: string } }` | — | Per-step CPU/memory override. Overrides the `stepTemplate` defaults. |
 
 #### `TaskOptions`
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `name` | `string` | *required* | Task name in manifests |
-| `params` | `Param[]` | `[]` | Parameters accepted by this task |
+| `params` | `Param[]` | `[]` | Parameters accepted by this task. Reporter params are auto-merged — see `statusReporter`. |
 | `workspaces` | `Workspace[]` | `[]` | Workspaces required by this task |
 | `steps` | `TaskStepSpec[]` | *required* | Ordered list of steps |
 | `needs` | `Task[]` | `[]` | Dependency graph edges |
 | `stepTemplate` | `Record<string, unknown>` | — | Override/extend step template |
+| `statusContext` | `string` | task `name` | Context string reported to the external status system (e.g. `"ci/test"`). Requires `statusReporter`. |
+| `statusReporter` | `StatusReporter` | — | When set, automatically appends a final status-reporting step and merges the reporter's `requiredParams` into this task's params. |
 
 #### Methods
 
@@ -100,6 +104,8 @@ All steps inherit a secure-by-default `stepTemplate` that drops all capabilities
 
 Composes tasks into a Tekton Pipeline. Automatically discovers transitive dependencies, infers params/workspaces, validates the graph, and topologically sorts tasks.
 
+For pipelines that clone a git repository, prefer [`GitPipeline`](#gitpipeline).
+
 #### `PipelineOptions`
 
 | Property | Type | Default | Description |
@@ -107,6 +113,7 @@ Composes tasks into a Tekton Pipeline. Automatically discovers transitive depend
 | `name` | `string` | auto-generated | Pipeline name. Derived from trigger type when omitted |
 | `triggers` | `TRIGGER_EVENTS[]` | `[]` | Events that start this pipeline |
 | `tasks` | `Task[]` | *required* | Top-level tasks (dependencies auto-discovered) |
+| `finallyTasks` | `Task[]` | `[]` | Tasks that run unconditionally after all regular tasks complete or fail |
 | `params` | `Param[]` | `[]` | Additional pipeline-level params |
 
 #### Properties
@@ -127,6 +134,45 @@ Composes tasks into a Tekton Pipeline. Automatically discovers transitive depend
 
 ---
 
+### `GitPipeline`
+
+Extends `Pipeline` with automatic git-clone setup. Creates a `git-clone` task and shared workspace, then wires both into every task in the pipeline:
+
+- The workspace is added to every task's `workspaces` (idempotent — safe to share task instances across multiple `GitPipeline`s)
+- Tasks with no explicit `needs` get `runAfter: git-clone` injected at spec-generation time, without mutating `task.needs`
+
+```typescript
+const workspace = new Workspace({ name: 'workspace' });
+
+const test = new Task({ name: 'test', steps: [...] });
+const build = new Task({ name: 'build', needs: [test], steps: [...] });
+
+const pipeline = new GitPipeline({
+  workspace,
+  triggers: [TRIGGER_EVENTS.PUSH],
+  tasks: [test, build],
+  // Execution order: git-clone → test → build
+});
+```
+
+#### `GitPipelineOptions`
+
+Extends all [`PipelineOptions`](#pipelineoptions) with:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `workspace` | `Workspace` | `new Workspace({ name: 'workspace' })` | Shared workspace mounted by all tasks |
+| `cloneImage` | `string` | `'cgr.dev/chainguard/git:latest'` | Container image for the git clone step |
+
+#### Additional properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `workspace` | `Workspace` | The shared workspace |
+| `cloneTask` | `Task` | The auto-generated `git-clone` task |
+
+---
+
 ### `TektonProject`
 
 Top-level orchestrator. Synthesizes all tasks, pipelines, and trigger infrastructure to YAML.
@@ -144,6 +190,7 @@ Top-level orchestrator. Synthesizes all tasks, pipelines, and trigger infrastruc
 | `outdir` | `string` | cdk8s default | Output directory |
 | `urlParam` | `string` | `'url'` | Param name for repository URL |
 | `revisionParam` | `string` | `'revision'` | Param name for git revision |
+| `gitRefParam` | `string` | — | Param name for the git ref string (branch or tag ref, e.g. `refs/heads/main`). When set, the trigger infrastructure passes the ref to each PipelineRun. |
 
 ---
 
@@ -156,6 +203,59 @@ Enum of GitHub webhook event types.
 | `PUSH` | `'push'` | Branch pushes (excludes tags when tag pipeline exists) |
 | `PULL_REQUEST` | `'pull_request'` | Pull request opened/synchronized |
 | `TAG` | `'tag'` | Tag pushes (filtered via CEL on `refs/tags/`) |
+
+---
+
+## Status reporting
+
+### `StatusReporter`
+
+Provider-agnostic interface for reporting pipeline task statuses to an external system.
+
+| Member | Description |
+|--------|-------------|
+| `createPendingTask(contexts: string[])` | Returns a `Task` that marks all given context strings as "pending" before any other task runs |
+| `finalStep(context: string)` | Returns a `TaskStepSpec` that reads `/tekton/home/.exit-code` and reports success or failure for the given context |
+| `requiredParams` | `Param[]` — params this reporter needs (e.g. repo name, revision). Automatically merged into the `params` of any `Task` that uses this reporter. |
+
+### `GitHubStatusReporter`
+
+Reports task statuses to the [GitHub Commit Status API](https://docs.github.com/en/rest/commits/statuses). Zero-config with sensible defaults.
+
+```typescript
+const reporter = new GitHubStatusReporter();
+// Requires a 'github-token' Secret in the namespace with key 'token'
+```
+
+Attach to a task to have it report its status to GitHub:
+
+```typescript
+const test = new Task({
+  name: 'test',
+  statusContext: 'ci/test',   // label shown on the PR; defaults to task name
+  statusReporter: reporter,
+  steps: [{
+    name: 'run',
+    image: 'node:22-alpine',
+    command: ['sh', '-c'],
+    args: ['npm test; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC'],
+    onError: 'continue',
+  }],
+});
+```
+
+#### `GitHubStatusReporterOptions`
+
+All options are optional.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `image` | `string` | `'cgr.dev/chainguard/curl:latest-dev'` | Image used for status-reporting steps (needs `curl`) |
+| `tokenSecretName` | `string` | `'github-token'` | Name of the Kubernetes Secret containing the GitHub token at key `token` |
+| `repoFullNameParam` | `Param` | `new Param({ name: 'repo-full-name' })` | Param supplying the `owner/repo` value |
+| `revisionParam` | `Param` | `new Param({ name: 'revision' })` | Param supplying the commit SHA |
+
+> **Note:** The `repoFullNameParam` and `revisionParam` are automatically injected into any task that uses this reporter — you don't need to add them to the task's `params`.
 
 ---
 
@@ -189,7 +289,7 @@ Abstract base class for GitHub webhook triggers. Generates a TriggerBinding + Tr
 #### Properties
 
 | Property | Type | Description |
-|----------|------|-------------|
+|--------|------|-------------|
 | `bindingRef` | `string` | Fully-qualified TriggerBinding name |
 | `templateRef` | `string` | Fully-qualified TriggerTemplate name |
 
@@ -240,3 +340,4 @@ cdk8s Chart that generates shared trigger infrastructure: ServiceAccount, RBAC, 
 | `GITHUB_REPO_URL` | `'https://github.com/$(body.repository.full_name)'` | Repo URL expression |
 | `DEFAULT_STEP_SECURITY_CONTEXT` | `{ allowPrivilegeEscalation: false, ... }` | Default step security context |
 | `RESTRICTED_STEP_SECURITY_CONTEXT` | `{ ..., runAsNonRoot: true }` | Stricter security context with `runAsNonRoot` |
+| `DEFAULT_STEP_RESOURCES` | `{ requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '1', memory: '512Mi' } }` | Default step resource requests and limits |

@@ -2,10 +2,9 @@ import {
     Param,
     Workspace,
     Task,
-    Pipeline,
+    GitPipeline,
     TektonProject,
     TRIGGER_EVENTS,
-    RESTRICTED_STEP_SECURITY_CONTEXT,
 } from "../src";
 
 // ---- Variables ──────────────────────────────────────────────────────────────
@@ -15,8 +14,6 @@ const golangVersion = "1.23.0";
 const workspace = new Workspace({ name: "workspace" });
 
 // ─── Params ──────────────────────────────────────────────────────────────────
-const urlParam = new Param({ name: "url", type: "string" });
-const revisionParam = new Param({ name: "revision", type: "string" });
 const buildPathParam = new Param({
     name: "build-path",
     type: "string",
@@ -24,29 +21,9 @@ const buildPathParam = new Param({
 });
 
 // ─── Tasks ───────────────────────────────────────────────────────────────────
-const gitClone = new Task({
-    name: "git-clone",
-    stepTemplate: { securityContext: RESTRICTED_STEP_SECURITY_CONTEXT },
-    params: [urlParam, revisionParam],
-    workspaces: [workspace],
-    steps: [
-        {
-            name: "clone",
-            image: "cgr.dev/chainguard/git:latest",
-            workingDir: workspace.path,
-            script: `#!/bin/sh
-set -e
-git clone -v ${urlParam} .
-git checkout ${revisionParam}`,
-        },
-    ],
-});
-
 const goTest = new Task({
     name: "test-go",
     params: [buildPathParam],
-    workspaces: [workspace],
-    needs: [gitClone],
     steps: [
         {
             name: "test",
@@ -60,8 +37,6 @@ const goTest = new Task({
 const goBuild = new Task({
     name: "build-go",
     params: [buildPathParam],
-    workspaces: [workspace],
-    needs: [gitClone],
     steps: [
         {
             name: "build",
@@ -75,8 +50,6 @@ const goBuild = new Task({
 const sbom = new Task({
     name: "generate-sbom",
     params: [buildPathParam],
-    workspaces: [workspace],
-    needs: [gitClone],
     steps: [
         {
             name: "sbom",
@@ -90,7 +63,6 @@ const sbom = new Task({
 const vulnScan = new Task({
     name: "vuln-scan",
     params: [buildPathParam],
-    workspaces: [workspace],
     needs: [sbom],
     steps: [
         {
@@ -105,8 +77,6 @@ const vulnScan = new Task({
 const lint = new Task({
     name: "lint-go",
     params: [buildPathParam],
-    workspaces: [workspace],
-    needs: [gitClone],
     steps: [
         {
             name: "lint",
@@ -118,20 +88,23 @@ const lint = new Task({
 });
 
 // ─── Pipelines ───────────────────────────────────────────────────────────────
-const pushPipeline = new Pipeline({
+const pushPipeline = new GitPipeline({
     name: "go-push",
+    workspace,
     triggers: [TRIGGER_EVENTS.PUSH],
     tasks: [goTest, goBuild, sbom, vulnScan],
 });
 
-const prPipeline = new Pipeline({
+const prPipeline = new GitPipeline({
     name: "go-pull-request",
+    workspace,
     triggers: [TRIGGER_EVENTS.PULL_REQUEST],
     tasks: [goTest, sbom, vulnScan],
 });
 
-const lintPipeline = new Pipeline({
+const lintPipeline = new GitPipeline({
     name: "go-lint",
+    workspace,
     tasks: [lint],
 });
 

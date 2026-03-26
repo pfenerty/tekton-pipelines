@@ -2,15 +2,13 @@ import {
     Param,
     Workspace,
     Task,
-    Pipeline,
+    GitPipeline,
     TektonProject,
     TRIGGER_EVENTS,
-    RESTRICTED_STEP_SECURITY_CONTEXT,
     GitHubStatusReporter,
 } from "../src";
 
 // ─── Images ──────────────────────────────────────────────────────────────────
-const gitImage = "cgr.dev/chainguard/git:latest";
 const nodeImage = "node:22-alpine";
 const syftImage = "ghcr.io/anchore/syft:v1.42.3";
 const grypeImage = "ghcr.io/anchore/grype:v0.110.0";
@@ -20,47 +18,20 @@ const grantImage = "ghcr.io/anchore/grant:v0.6.4";
 const workspace = new Workspace({ name: "workspace" });
 
 // ─── Params ──────────────────────────────────────────────────────────────────
-const urlParam = new Param({ name: "url", type: "string" });
-const revisionParam = new Param({ name: "revision", type: "string" });
 const buildPathParam = new Param({
     name: "build-path",
     type: "string",
     default: "./",
 });
-const repoFullName = new Param({ name: "repo-full-name", type: "string" });
 const refParam = new Param({ name: "ref", type: "string" });
 
 // ─── Status reporter ─────────────────────────────────────────────────────────
-const statusReporter = new GitHubStatusReporter({
-    repoFullNameParam: repoFullName,
-    revisionParam: revisionParam,
-});
+const statusReporter = new GitHubStatusReporter();
 
 // ─── Tasks ───────────────────────────────────────────────────────────────────
-const gitClone = new Task({
-    name: "git-clone",
-    stepTemplate: { securityContext: RESTRICTED_STEP_SECURITY_CONTEXT },
-    params: [urlParam, revisionParam],
-    workspaces: [workspace],
-    steps: [
-        {
-            name: "clone",
-            image: gitImage,
-            workingDir: workspace.path,
-            script: `#!/bin/sh
-set -e
-git clone -v $(params.url) .
-git config --global --add safe.directory ${workspace.path}
-git checkout $(params.revision)`,
-        },
-    ],
-});
-
 const npmTest = new Task({
     name: "test-npm",
-    params: [buildPathParam, repoFullName, revisionParam],
-    workspaces: [workspace],
-    needs: [gitClone],
+    params: [buildPathParam],
     statusContext: "tektonic-ci/test",
     statusReporter,
     steps: [
@@ -79,8 +50,7 @@ const npmTest = new Task({
 
 const npmBuild = new Task({
     name: "build-npm",
-    params: [buildPathParam, repoFullName, revisionParam],
-    workspaces: [workspace],
+    params: [buildPathParam],
     needs: [npmTest],
     statusContext: "tektonic-ci/build",
     statusReporter,
@@ -100,9 +70,7 @@ const npmBuild = new Task({
 
 const anchoreScann = new Task({
     name: "anchore-scan",
-    params: [repoFullName, revisionParam, refParam],
-    workspaces: [workspace],
-    needs: [gitClone],
+    params: [refParam],
     statusContext: "tektonic-ci/scan",
     statusReporter,
     steps: [
@@ -180,14 +148,16 @@ fi`,
 });
 
 // ─── Pipelines ───────────────────────────────────────────────────────────────
-const pushPipeline = new Pipeline({
+const pushPipeline = new GitPipeline({
     name: "npm-push",
+    workspace,
     triggers: [TRIGGER_EVENTS.PUSH],
     tasks: [npmTest, anchoreScann],
 });
 
-const prPipeline = new Pipeline({
+const prPipeline = new GitPipeline({
     name: "npm-pull-request",
+    workspace,
     triggers: [TRIGGER_EVENTS.PULL_REQUEST],
     tasks: [npmTest, npmBuild, anchoreScann],
 });

@@ -7,6 +7,8 @@ export { Task } from './lib/core/task';
 export type { TaskOptions, TaskStepSpec } from './lib/core/task';
 export { Pipeline } from './lib/core/pipeline';
 export type { PipelineOptions } from './lib/core/pipeline';
+export { GitPipeline } from './lib/core/git-pipeline';
+export type { GitPipelineOptions } from './lib/core/git-pipeline';
 export { TektonProject } from './lib/core/tekton-project';
 export type { TektonProjectOptions } from './lib/core/tekton-project';
 export { TRIGGER_EVENTS } from './lib/core/trigger-events';

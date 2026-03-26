@@ -84,12 +84,19 @@ export class Task {
 
   constructor(opts: TaskOptions) {
     this.name = opts.name;
-    this.params = opts.params ?? [];
+    // Auto-merge statusReporter.requiredParams into task params (user params take precedence)
+    const base = opts.params ?? [];
+    const reporterParams = opts.statusReporter?.requiredParams ?? [];
+    const seen = new Map<string, Param>();
+    for (const p of [...base, ...reporterParams]) {
+      if (!seen.has(p.name)) seen.set(p.name, p);
+    }
+    this.params = [...seen.values()];
     this.workspaces = opts.workspaces ?? [];
     this.steps = opts.steps;
     this.needs = opts.needs ?? [];
     this.stepTemplate = opts.stepTemplate;
-    this.statusContext = opts.statusContext;
+    this.statusContext = opts.statusContext ?? opts.name;
     this.statusReporter = opts.statusReporter;
   }
 

@@ -14,46 +14,26 @@ npm install @pfenerty/tektonic cdk8s constructs
 
 ```typescript
 import {
-  Param, Workspace, Task, Pipeline, TektonProject,
-  TRIGGER_EVENTS, RESTRICTED_STEP_SECURITY_CONTEXT,
+  Workspace, Task, GitPipeline, TektonProject, TRIGGER_EVENTS,
 } from '@pfenerty/tektonic';
 
-// Params interpolate into step scripts via template literals
-const url = new Param({ name: 'url' });
-const revision = new Param({ name: 'revision' });
 const workspace = new Workspace({ name: 'workspace' });
-
-const gitClone = new Task({
-  name: 'git-clone',
-  stepTemplate: { securityContext: RESTRICTED_STEP_SECURITY_CONTEXT },
-  params: [url, revision],
-  workspaces: [workspace],
-  steps: [{
-    name: 'clone',
-    image: 'cgr.dev/chainguard/git:latest',
-    workingDir: workspace.path,        // → $(workspaces.workspace.path)
-    script: `#!/bin/sh
-set -e
-git clone -v ${url} .
-git checkout ${revision}`,            // → $(params.url), $(params.revision)
-  }],
-});
 
 const test = new Task({
   name: 'test',
-  workspaces: [workspace],
-  needs: [gitClone],                   // runs after git-clone
   steps: [{
     name: 'test',
     image: 'node:22-alpine',
-    workingDir: workspace.path,
+    workingDir: workspace.path,           // → $(workspaces.workspace.path)
     command: ['sh', '-c', 'npm ci && npm test'],
   }],
 });
 
-const pushPipeline = new Pipeline({
+const pushPipeline = new GitPipeline({
   triggers: [TRIGGER_EVENTS.PUSH],
-  tasks: [test],                       // git-clone auto-discovered via needs
+  workspace,
+  tasks: [test],
+  // git-clone is auto-created; test runs after it automatically
 });
 
 new TektonProject({
@@ -62,15 +42,17 @@ new TektonProject({
   pipelines: [pushPipeline],
   webhookSecretRef: { secretName: 'github-webhook-secret', secretKey: 'secret' },
 });
-// → writes YAML for Task, Pipeline, RBAC, EventListener, TriggerBinding/Template
+// → writes YAML for Tasks, Pipeline, RBAC, EventListener, TriggerBindings/Templates
 ```
 
 ## Key features
 
+- **`GitPipeline`** — auto-creates a `git-clone` task and wires the shared workspace and dependencies for every task
 - **Template literal interpolation** — `${param}` and `${workspace.path}` produce Tekton expressions
 - **Automatic dependency discovery** — `task.needs` defines the graph; pipelines walk it transitively
 - **Param & workspace inference** — pipelines collect the union of all task params/workspaces automatically
 - **Security defaults** — every step gets `drop: ALL` capabilities and seccomp `RuntimeDefault`
+- **GitHub status reporting** — report commit statuses back to GitHub via `GitHubStatusReporter`; reporter params are auto-injected into tasks
 - **GitHub webhook triggers** — push, pull request, and tag triggers with CEL filtering, RBAC, and EventListener generation
 - **Name prefixing** — isolate multiple projects in the same namespace
 

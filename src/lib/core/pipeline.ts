@@ -42,7 +42,8 @@ export class Pipeline {
   readonly finallyTasks: Task[];
   private readonly extraParams: Param[];
   /** Auto-generated task that sets all status contexts to pending at pipeline start. */
-  private readonly _pendingTask?: Task;
+  /** @internal Auto-generated task that sets all status contexts to pending at pipeline start. */
+  protected readonly _pendingTask?: Task;
 
   private static _counter = 0;
 
@@ -72,7 +73,7 @@ export class Pipeline {
     }
   }
 
-  private discoverAllTasks(tasks: Task[]): Task[] {
+  protected discoverAllTasks(tasks: Task[]): Task[] {
     const seen = new Set<Task>();
     const visit = (t: Task) => {
       if (seen.has(t)) return;
@@ -129,15 +130,9 @@ export class Pipeline {
       spec: {
         params: this.deduplicateParams([...(extraParams ?? []), ...this.inferParams()]),
         workspaces: this.inferWorkspaces(),
-        tasks: sorted.map(task => {
-          let runAfterNames = task.needs
-            .filter(dep => this.allTasks.includes(dep))
-            .map(dep => dep.name);
-          if (this._pendingTask && task.statusContext && task !== this._pendingTask) {
-            runAfterNames = [...runAfterNames, this._pendingTask.name];
-          }
-          return task._toPipelineTaskSpec(runAfterNames, namePrefix);
-        }),
+        tasks: sorted.map(task =>
+          task._toPipelineTaskSpec(this.runAfterFor(task), namePrefix),
+        ),
         ...(this.finallyTasks.length > 0 && {
           finally: this.finallyTasks.map(task =>
             task._toPipelineTaskSpec([], namePrefix),
@@ -145,6 +140,20 @@ export class Pipeline {
         }),
       },
     });
+  }
+
+  /**
+   * Returns the `runAfter` task names for a given task within this pipeline.
+   * Override in subclasses to inject additional ordering constraints.
+   */
+  protected runAfterFor(task: Task): string[] {
+    let names = task.needs
+      .filter(dep => this.allTasks.includes(dep))
+      .map(dep => dep.name);
+    if (this._pendingTask && task.statusContext && task !== this._pendingTask) {
+      names = [...names, this._pendingTask.name];
+    }
+    return names;
   }
 
   private deduplicateParams(params: Record<string, unknown>[]): Record<string, unknown>[] {
