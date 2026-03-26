@@ -12,6 +12,7 @@ export class GitHubPullRequestTrigger extends GitHubTriggerBase {
       templateName: 'github-pull-request-trigger-template',
       pipelineRunGenerateName: 'github-pull-request-pipeline-run-',
       gitRevisionValue: '$(body.pull_request.head.sha)',
+      gitRefValue: '$(body.pull_request.head.ref)',
     });
   }
 }

@@ -12,6 +12,7 @@ export class GitHubPushTrigger extends GitHubTriggerBase {
       templateName: 'github-push-trigger-template',
       pipelineRunGenerateName: 'github-push-pipeline-run-',
       gitRevisionValue: '$(body.head_commit.id)',
+      gitRefValue: '$(body.ref)',
     });
   }
 }

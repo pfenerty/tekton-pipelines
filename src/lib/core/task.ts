@@ -3,6 +3,7 @@ import { ApiObject } from 'cdk8s';
 import { TEKTON_API_V1, DEFAULT_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES } from '../constants';
 import { Param } from './param';
 import { Workspace } from './workspace';
+import type { StatusReporter } from './status-reporter';
 
 /** Specification for a single step within a Tekton Task. */
 export interface TaskStepSpec {
@@ -26,8 +27,8 @@ export interface TaskStepSpec {
   }[];
   /** Controls behaviour when this step fails. `continue` lets subsequent steps run. */
   onError?: 'continue' | 'stopAndFail';
-  /** CPU/memory requests and limits for this step (overrides stepTemplate resources). */
-  resources?: {
+  /** CPU/memory requests and limits for this step (overrides stepTemplate computeResources). */
+  computeResources?: {
     requests?: { cpu?: string; memory?: string };
     limits?: { cpu?: string; memory?: string };
   };
@@ -47,6 +48,14 @@ export interface TaskOptions {
   needs?: Task[];
   /** Override or extend the default step template (merged with security context defaults). */
   stepTemplate?: Record<string, unknown>;
+  /**
+   * Status context string reported to the external system (e.g. `"ci/test"`).
+   * When set together with `statusReporter`, the reporter's `finalStep` is
+   * automatically appended to this task's steps at synthesis time.
+   */
+  statusContext?: string;
+  /** Reporter used to generate the final-status step for this task. */
+  statusReporter?: StatusReporter;
 }
 
 /**
@@ -68,6 +77,10 @@ export class Task {
   /** Tasks that must complete before this task runs. */
   readonly needs: Task[];
   readonly stepTemplate?: Record<string, unknown>;
+  /** Status context reported to the external system. */
+  readonly statusContext?: string;
+  /** Reporter that generates the final-status step. */
+  readonly statusReporter?: StatusReporter;
 
   constructor(opts: TaskOptions) {
     this.name = opts.name;
@@ -76,11 +89,16 @@ export class Task {
     this.steps = opts.steps;
     this.needs = opts.needs ?? [];
     this.stepTemplate = opts.stepTemplate;
+    this.statusContext = opts.statusContext;
+    this.statusReporter = opts.statusReporter;
   }
 
   /** Synthesizes the Tekton Task resource into the given cdk8s scope. */
   synth(scope: Construct, namespace: string, namePrefix?: string): void {
     const resourceName = namePrefix ? `${namePrefix}-${this.name}` : this.name;
+    const steps = (this.statusReporter && this.statusContext)
+      ? [...this.steps, this.statusReporter.finalStep(this.statusContext)]
+      : this.steps;
     new ApiObject(scope, this.name, {
       apiVersion: TEKTON_API_V1,
       kind: 'Task',
@@ -88,12 +106,12 @@ export class Task {
       spec: {
         stepTemplate: {
           securityContext: DEFAULT_STEP_SECURITY_CONTEXT,
-          resources: DEFAULT_STEP_RESOURCES,
+          computeResources: DEFAULT_STEP_RESOURCES,
           ...(this.stepTemplate ?? {}),
         },
         ...(this.params.length > 0 && { params: this.params.map(p => p.toSpec()) }),
         ...(this.workspaces.length > 0 && { workspaces: this.workspaces.map(w => w.toSpec()) }),
-        steps: this.steps,
+        steps,
       },
     });
   }

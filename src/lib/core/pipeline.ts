@@ -41,6 +41,8 @@ export class Pipeline {
   /** Tasks that run unconditionally after all regular tasks complete or fail. */
   readonly finallyTasks: Task[];
   private readonly extraParams: Param[];
+  /** Auto-generated task that sets all status contexts to pending at pipeline start. */
+  private readonly _pendingTask?: Task;
 
   private static _counter = 0;
 
@@ -54,9 +56,20 @@ export class Pipeline {
     }
     this.triggers = opts.triggers ?? [];
     this.tasks = opts.tasks;
-    this.allTasks = this.discoverAllTasks(opts.tasks);
     this.finallyTasks = opts.finallyTasks ?? [];
     this.extraParams = opts.params ?? [];
+
+    const regularTasks = this.discoverAllTasks(opts.tasks);
+    const statusTasks = regularTasks.filter(t => t.statusContext && t.statusReporter);
+
+    if (statusTasks.length > 0) {
+      const reporter = statusTasks[0].statusReporter!;
+      const contexts = statusTasks.map(t => t.statusContext!);
+      this._pendingTask = reporter.createPendingTask(contexts);
+      this.allTasks = [this._pendingTask, ...regularTasks];
+    } else {
+      this.allTasks = regularTasks;
+    }
   }
 
   private discoverAllTasks(tasks: Task[]): Task[] {
@@ -117,9 +130,12 @@ export class Pipeline {
         params: this.deduplicateParams([...(extraParams ?? []), ...this.inferParams()]),
         workspaces: this.inferWorkspaces(),
         tasks: sorted.map(task => {
-          const runAfterNames = task.needs
+          let runAfterNames = task.needs
             .filter(dep => this.allTasks.includes(dep))
             .map(dep => dep.name);
+          if (this._pendingTask && task.statusContext && task !== this._pendingTask) {
+            runAfterNames = [...runAfterNames, this._pendingTask.name];
+          }
           return task._toPipelineTaskSpec(runAfterNames, namePrefix);
         }),
         ...(this.finallyTasks.length > 0 && {

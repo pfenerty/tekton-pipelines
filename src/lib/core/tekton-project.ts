@@ -24,6 +24,8 @@ export interface TektonProjectOptions {
   urlParam?: string;
   /** Pipeline param name that receives the git revision. Defaults to `"revision"`. */
   revisionParam?: string;
+  /** Pipeline param name that receives the git ref (branch/tag ref). */
+  gitRefParam?: string;
 }
 
 /**
@@ -93,6 +95,7 @@ export class TektonProject {
         webhookSecretRef: opts.webhookSecretRef,
         urlParam: opts.urlParam,
         revisionParam: opts.revisionParam,
+        gitRefParam: opts.gitRefParam,
       });
     }
 

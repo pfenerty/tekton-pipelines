@@ -22,6 +22,8 @@ export interface TektonInfraChartProps extends ChartProps {
   urlParam?: string;
   /** Pipeline param name for the git revision. Defaults to `"revision"`. */
   revisionParam?: string;
+  /** Pipeline param name that receives the git ref. */
+  gitRefParam?: string;
 }
 
 /**
@@ -77,6 +79,7 @@ export class TektonInfraChart extends Chart {
       namePrefix: props.namePrefix,
       urlParam: props.urlParam,
       revisionParam: props.revisionParam,
+      gitRefParam: props.gitRefParam,
     };
 
     const pushTrigger = new GitHubPushTrigger(this, 'github-push-trigger', {

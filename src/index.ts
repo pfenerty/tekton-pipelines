@@ -10,6 +10,11 @@ export type { PipelineOptions } from './lib/core/pipeline';
 export { TektonProject } from './lib/core/tekton-project';
 export type { TektonProjectOptions } from './lib/core/tekton-project';
 export { TRIGGER_EVENTS } from './lib/core/trigger-events';
+export type { StatusReporter } from './lib/core/status-reporter';
+
+// Reporters
+export { GitHubStatusReporter } from './lib/reporters/github-status-reporter';
+export type { GitHubStatusReporterOptions } from './lib/reporters/github-status-reporter';
 
 // Triggers
 export { GitHubTriggerBase } from './lib/triggers/github-trigger-base';

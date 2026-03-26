@@ -32,11 +32,11 @@
     "import": "npx cdk8s import",
     "prepare": "npm run build"
   },
-  "peerDependencies": {
+  "peerDependencies": {},
+  "dependencies": {
     "cdk8s": ">=2.0.0",
     "constructs": ">=10.0.0"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^25.0.0",
     "cdk8s": "^2.68.0",

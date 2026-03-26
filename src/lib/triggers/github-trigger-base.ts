@@ -24,6 +24,8 @@ export interface GitHubTriggerBaseProps {
   urlParam?: string;
   /** Pipeline param name for the git revision. Defaults to `"revision"`. */
   revisionParam?: string;
+  /** Pipeline param name that receives the git ref (e.g. `"ref"`). Required to pass the ref to PipelineRuns. */
+  gitRefParam?: string;
 }
 
 /** Event-specific configuration provided by trigger subclasses. */
@@ -36,6 +38,8 @@ export interface GitHubTriggerConfig {
   pipelineRunGenerateName: string;
   /** CEL/body expression that extracts the git revision from the webhook payload. */
   gitRevisionValue: string;
+  /** CEL/body expression that extracts the git ref from the webhook payload (optional). */
+  gitRefValue?: string;
 }
 
 /**
@@ -76,6 +80,7 @@ export class GitHubTriggerBase extends Construct {
           { name: 'gitrepositoryurl', value: GITHUB_REPO_URL },
           { name: 'projectname', value: '$(body.repository.name)' },
           { name: 'repo-full-name', value: '$(body.repository.full_name)' },
+          ...(config.gitRefValue ? [{ name: 'gitref', value: config.gitRefValue }] : []),
         ],
       },
     });
@@ -94,6 +99,7 @@ export class GitHubTriggerBase extends Construct {
           { name: 'namespace', description: 'The namespace to create the resources' },
           { name: 'projectname', description: 'name of the project' },
           { name: 'repo-full-name', description: 'GitHub owner/repo' },
+          ...(config.gitRefValue ? [{ name: 'gitref', description: 'The git ref' }] : []),
         ],
         resourcetemplates: [
           {
@@ -111,6 +117,9 @@ export class GitHubTriggerBase extends Construct {
                 { name: urlParamName, value: '$(tt.params.gitrepositoryurl)' },
                 { name: 'project-name', value: '$(tt.params.projectname)' },
                 { name: 'repo-full-name', value: '$(tt.params.repo-full-name)' },
+                ...(config.gitRefValue && props.gitRefParam
+                  ? [{ name: props.gitRefParam, value: '$(tt.params.gitref)' }]
+                  : []),
               ],
               workspaces: [
                 {
