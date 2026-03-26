@@ -23,40 +23,34 @@ import {
   Param, Workspace, Task, GitPipeline, TektonProject, TRIGGER_EVENTS,
 } from '@pfenerty/tektonic';
 
-const buildPath = new Param({ name: 'build-path', type: 'string', default: './' });
 const workspace = new Workspace({ name: 'workspace' });
 ```
 
 When used in template literals:
-- `${buildPath}` produces `$(params.build-path)`
 - `${workspace.path}` produces `$(workspaces.workspace.path)`
 
 `url` and `revision` params are created and managed automatically by `GitPipeline` — you don't need to declare them.
 
 ## 3. Create tasks
 
-Each `Task` declares its params, steps, and any direct dependencies (`needs`). When using `GitPipeline`, you don't need to declare the shared workspace or the `git-clone` dependency — both are injected automatically.
+Each `Task` declares its steps and any direct dependencies (`needs`). When using `GitPipeline`, you don't need to declare the shared workspace, set `workingDir`, or add the `git-clone` dependency — all are injected automatically.
 
 ```typescript
 const npmTest = new Task({
   name: 'test-npm',
-  params: [buildPath],
   steps: [{
     name: 'test',
     image: 'node:22-alpine',
-    workingDir: `${workspace.path}/${buildPath}`,
     command: ['sh', '-c', 'npm ci && npm test'],
   }],
 });
 
 const npmBuild = new Task({
   name: 'build-npm',
-  params: [buildPath],
   needs: [npmTest],   // ← inter-task dependency; git-clone is handled by GitPipeline
   steps: [{
     name: 'build',
     image: 'node:22-alpine',
-    workingDir: `${workspace.path}/${buildPath}`,
     command: ['sh', '-c', 'npm ci && npm run build'],
   }],
 });
@@ -64,11 +58,13 @@ const npmBuild = new Task({
 
 The `needs` array forms a dependency graph between your tasks. Pipelines automatically discover all transitive dependencies and set `runAfter` ordering — you only need to specify direct dependencies between your own tasks.
 
+Steps run in the workspace root (`$(workspaces.workspace.path)`) by default. Override `workingDir` on individual steps when you need a subdirectory (e.g. `workingDir: \`${workspace.path}/packages/app\``).
+
 ## 4. Compose pipelines
 
-Use `GitPipeline` instead of `Pipeline`. It automatically creates a `git-clone` task, injects the shared workspace into every task, and wires `git-clone` as a dependency for tasks with no other explicit dependencies.
+Use `GitPipeline` instead of `Pipeline`. It automatically creates a `git-clone` task, injects the shared workspace and default `workingDir` into every task, and wires `git-clone` as a dependency for tasks with no other explicit dependencies.
 
-Pass `workspace` explicitly so your task steps can reference `workspace.path`.
+Pass `workspace` explicitly so your task steps can reference `workspace.path` when a custom `workingDir` is needed.
 
 ```typescript
 const pushPipeline = new GitPipeline({
@@ -132,13 +128,11 @@ const statusReporter = new GitHubStatusReporter();
 
 const npmTest = new Task({
   name: 'test-npm',
-  params: [buildPath],
   statusContext: 'ci/test',   // ← label shown in the GitHub Checks UI
   statusReporter,             // ← auto-appends a status-reporting step
   steps: [{
     name: 'test',
     image: 'node:22-alpine',
-    workingDir: `${workspace.path}/${buildPath}`,
     command: ['sh', '-c'],
     // capture exit code so the reporter can read it
     args: ['npm ci && npm test; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC'],

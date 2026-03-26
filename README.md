@@ -24,8 +24,8 @@ const test = new Task({
   steps: [{
     name: 'test',
     image: 'node:22-alpine',
-    workingDir: workspace.path,           // → $(workspaces.workspace.path)
     command: ['sh', '-c', 'npm ci && npm test'],
+    // workingDir defaults to $(workspaces.workspace.path) — set by GitPipeline
   }],
 });
 

@@ -139,6 +139,7 @@ For pipelines that clone a git repository, prefer [`GitPipeline`](#gitpipeline).
 Extends `Pipeline` with automatic git-clone setup. Creates a `git-clone` task and shared workspace, then wires both into every task in the pipeline:
 
 - The workspace is added to every task's `workspaces` (idempotent — safe to share task instances across multiple `GitPipeline`s)
+- `workingDir: $(workspaces.<name>.path)` is injected into every task's `stepTemplate` so steps run in the cloned repo root by default — individual steps can still override `workingDir` explicitly
 - Tasks with no explicit `needs` get `runAfter: git-clone` injected at spec-generation time, without mutating `task.needs`
 
 ```typescript

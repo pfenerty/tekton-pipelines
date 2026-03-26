@@ -1,6 +1,5 @@
 import {
     Param,
-    Workspace,
     Task,
     GitPipeline,
     TektonProject,
@@ -14,15 +13,7 @@ const syftImage = "ghcr.io/anchore/syft:v1.42.3";
 const grypeImage = "ghcr.io/anchore/grype:v0.110.0";
 const grantImage = "ghcr.io/anchore/grant:v0.6.4";
 
-// ─── Shared workspace ────────────────────────────────────────────────────────
-const workspace = new Workspace({ name: "workspace" });
-
 // ─── Params ──────────────────────────────────────────────────────────────────
-const buildPathParam = new Param({
-    name: "build-path",
-    type: "string",
-    default: "./",
-});
 const refParam = new Param({ name: "ref", type: "string" });
 
 // ─── Status reporter ─────────────────────────────────────────────────────────
@@ -31,14 +22,11 @@ const statusReporter = new GitHubStatusReporter();
 // ─── Tasks ───────────────────────────────────────────────────────────────────
 const npmTest = new Task({
     name: "test-npm",
-    params: [buildPathParam],
-    statusContext: "tektonic-ci/test",
     statusReporter,
     steps: [
         {
             name: "test",
             image: nodeImage,
-            workingDir: `${workspace.path}/$(params.build-path)`,
             command: ["sh", "-c"],
             args: [
                 "npm ci && npm test; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC",
@@ -50,15 +38,12 @@ const npmTest = new Task({
 
 const npmBuild = new Task({
     name: "build-npm",
-    params: [buildPathParam],
     needs: [npmTest],
-    statusContext: "tektonic-ci/build",
     statusReporter,
     steps: [
         {
             name: "build",
             image: nodeImage,
-            workingDir: `${workspace.path}/$(params.build-path)`,
             command: ["sh", "-c"],
             args: [
                 "npm run build; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC",
@@ -71,13 +56,11 @@ const npmBuild = new Task({
 const anchoreScann = new Task({
     name: "anchore-scan",
     params: [refParam],
-    statusContext: "tektonic-ci/scan",
     statusReporter,
     steps: [
         {
             name: "generate-sbom",
             image: syftImage,
-            workingDir: workspace.path,
             command: ["/syft"],
             args: [
                 "file:package-lock.json",
@@ -90,7 +73,6 @@ const anchoreScann = new Task({
         {
             name: "scan",
             image: grypeImage,
-            workingDir: workspace.path,
             command: ["/grype"],
             args: [
                 "-v",
@@ -103,7 +85,6 @@ const anchoreScann = new Task({
         {
             name: "check-licenses",
             image: grantImage,
-            workingDir: workspace.path,
             command: ["/grant"],
             args: [
                 "check",
@@ -117,7 +98,6 @@ const anchoreScann = new Task({
         {
             name: "upload-sarif",
             image: "cgr.dev/chainguard/curl:latest-dev",
-            workingDir: workspace.path,
             env: [
                 {
                     name: "GITHUB_TOKEN",
@@ -150,14 +130,12 @@ fi`,
 // ─── Pipelines ───────────────────────────────────────────────────────────────
 const pushPipeline = new GitPipeline({
     name: "npm-push",
-    workspace,
     triggers: [TRIGGER_EVENTS.PUSH],
     tasks: [npmTest, anchoreScann],
 });
 
 const prPipeline = new GitPipeline({
     name: "npm-pull-request",
-    workspace,
     triggers: [TRIGGER_EVENTS.PULL_REQUEST],
     tasks: [npmTest, npmBuild, anchoreScann],
 });

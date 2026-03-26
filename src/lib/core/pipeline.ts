@@ -150,7 +150,7 @@ export class Pipeline {
     let names = task.needs
       .filter(dep => this.allTasks.includes(dep))
       .map(dep => dep.name);
-    if (this._pendingTask && task.statusContext && task !== this._pendingTask) {
+    if (this._pendingTask && task.statusContext && task.statusReporter && task !== this._pendingTask) {
       names = [...names, this._pendingTask.name];
     }
     return names;

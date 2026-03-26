@@ -23,6 +23,8 @@ export interface GitPipelineOptions extends PipelineOptions {
  * `GitPipeline` creates a `git-clone` task and a shared workspace, then wires
  * both into every task in the pipeline:
  * - The workspace is added to each task's `workspaces` (if not already present).
+ * - `workingDir: $(workspaces.<name>.path)` is injected into each task's `stepTemplate`
+ *   so steps run in the cloned repo root by default. Individual steps can override it.
  * - Tasks with no `runAfter` dependencies get `git-clone` injected automatically
  *   at pipeline-spec time — `task.needs` is never mutated, so task instances can
  *   be safely shared between multiple pipelines.
@@ -61,6 +63,7 @@ export class GitPipeline extends Pipeline {
       steps: [{
         name: 'clone',
         image: opts.cloneImage ?? 'cgr.dev/chainguard/git:latest',
+        workingDir: workspace.path,
         script: `#!/bin/sh
 set -e
 git clone ${url} .
@@ -69,13 +72,18 @@ git checkout ${revision}`,
       }],
     });
 
-    // Discover all user tasks transitively and inject the shared workspace.
-    // This mutation is idempotent: a workspace with the same name is never added twice,
-    // making it safe when the same task instance appears in multiple GitPipelines.
+    // Discover all user tasks transitively and inject the shared workspace and default
+    // workingDir. Both mutations are idempotent and safe when the same task instance
+    // appears in multiple GitPipelines.
     const allUserTasks = GitPipeline._discoverUserTasks(opts.tasks);
     for (const task of allUserTasks) {
       if (!task.workspaces.some(w => w.name === workspace.name)) {
         (task.workspaces as Workspace[]).push(workspace);
+      }
+      // Inject workspace path as the default workingDir via stepTemplate so task steps
+      // don't need to set it explicitly. User-provided stepTemplate.workingDir wins.
+      if (!(task as any).stepTemplate?.workingDir) {
+        (task as any).stepTemplate = { workingDir: workspace.path, ...(task.stepTemplate ?? {}) };
       }
     }
 

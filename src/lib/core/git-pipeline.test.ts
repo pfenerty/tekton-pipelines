@@ -125,6 +125,38 @@ describe('GitPipeline', () => {
     expect(wsNames).toContain('workspace');
   });
 
+  it('clone step has workingDir set to workspace path', () => {
+    const ws = new Workspace({ name: 'workspace' });
+    const pipeline = new GitPipeline({ name: 'ci', workspace: ws, tasks: [makeTask('test')] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline.cloneTask.synth(chart, 'ns');
+    const manifest = chart.toJson().find((m: any) => m.kind === 'Task' && m.metadata.name === 'git-clone');
+    expect(manifest.spec.steps[0].workingDir).toBe('$(workspaces.workspace.path)');
+  });
+
+  it('injects workspace path into task stepTemplate as default workingDir', () => {
+    const ws = new Workspace({ name: 'workspace' });
+    const test = makeTask('test');
+    new GitPipeline({ name: 'ci', workspace: ws, tasks: [test] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    test.synth(chart, 'ns');
+    const manifest = chart.toJson().find((m: any) => m.kind === 'Task' && m.metadata.name === 'test');
+    expect(manifest.spec.stepTemplate.workingDir).toBe('$(workspaces.workspace.path)');
+  });
+
+  it('does not overwrite a task stepTemplate workingDir already set', () => {
+    const ws = new Workspace({ name: 'workspace' });
+    const test = new Task({
+      name: 'test',
+      stepTemplate: { workingDir: '/custom/path' },
+      steps: [{ name: 's', image: 'alpine' }],
+    });
+    new GitPipeline({ name: 'ci', workspace: ws, tasks: [test] });
+    expect((test as any).stepTemplate.workingDir).toBe('/custom/path');
+  });
+
   it('tasks from multiple GitPipelines sharing the same instance are isolated in runAfter', () => {
     const ws = new Workspace({ name: 'workspace' });
     const shared = makeTask('shared');

@@ -5,6 +5,7 @@ import { Task } from './task';
 import { Param } from './param';
 import { Workspace } from './workspace';
 import { TRIGGER_EVENTS } from './trigger-events';
+import { GitHubStatusReporter } from '../reporters/github-status-reporter';
 
 describe('Pipeline', () => {
   const workspace = new Workspace({ name: 'workspace' });
@@ -176,6 +177,30 @@ describe('Pipeline', () => {
     expect(manifest.spec.finally[0].name).toBe('final');
     // finally tasks should not have runAfter
     expect(manifest.spec.finally[0].runAfter).toBeUndefined();
+  });
+
+  it('tasks without statusReporter do not get runAfter set-status-pending', () => {
+    const reporter = new GitHubStatusReporter();
+    const reportingTask = new Task({
+      name: 'test',
+      statusReporter: reporter,
+      steps: [{ name: 's', image: 'alpine', onError: 'continue' }],
+    });
+    const plainTask = new Task({
+      name: 'lint',
+      steps: [{ name: 's', image: 'alpine' }],
+    });
+    const pipeline = new Pipeline({ name: 'ci', tasks: [reportingTask, plainTask] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const manifest = chart.toJson()[0];
+    const lintSpec = manifest.spec.tasks.find((t: any) => t.name === 'lint');
+    // lint has no statusReporter — must not depend on set-status-pending
+    expect(lintSpec.runAfter).toBeUndefined();
+    // reporting task should depend on set-status-pending
+    const testSpec = manifest.spec.tasks.find((t: any) => t.name === 'test');
+    expect(testSpec.runAfter).toContain('set-status-pending');
   });
 
   it('_build() omits finally when no finally tasks', () => {

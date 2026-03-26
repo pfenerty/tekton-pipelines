@@ -1,5 +1,4 @@
 import {
-    Param,
     Workspace,
     Task,
     GitPipeline,
@@ -13,22 +12,13 @@ const golangVersion = "1.23.0";
 // ─── Shared workspace ────────────────────────────────────────────────────────
 const workspace = new Workspace({ name: "workspace" });
 
-// ─── Params ──────────────────────────────────────────────────────────────────
-const buildPathParam = new Param({
-    name: "build-path",
-    type: "string",
-    default: "./",
-});
-
 // ─── Tasks ───────────────────────────────────────────────────────────────────
 const goTest = new Task({
     name: "test-go",
-    params: [buildPathParam],
     steps: [
         {
             name: "test",
             image: `golang:${golangVersion}-alpine`,
-            workingDir: `${workspace.path}/${buildPathParam}`,
             command: ["go", "test", "./..."],
         },
     ],
@@ -36,12 +26,10 @@ const goTest = new Task({
 
 const goBuild = new Task({
     name: "build-go",
-    params: [buildPathParam],
     steps: [
         {
             name: "build",
             image: `golang:${golangVersion}-alpine`,
-            workingDir: `${workspace.path}/${buildPathParam}`,
             command: ["go", "build", "./..."],
         },
     ],
@@ -49,12 +37,10 @@ const goBuild = new Task({
 
 const sbom = new Task({
     name: "generate-sbom",
-    params: [buildPathParam],
     steps: [
         {
             name: "sbom",
             image: "anchore/syft:v1.11.0-debug",
-            workingDir: `${workspace.path}/${buildPathParam}`,
             command: ["sh", "-c", "syft . -o cyclonedx-json > sbom.json"],
         },
     ],
@@ -62,13 +48,11 @@ const sbom = new Task({
 
 const vulnScan = new Task({
     name: "vuln-scan",
-    params: [buildPathParam],
     needs: [sbom],
     steps: [
         {
             name: "scan",
             image: "anchore/grype:v0.79.6-debug",
-            workingDir: `${workspace.path}/${buildPathParam}`,
             command: ["sh", "-c", "grype sbom:sbom.json"],
         },
     ],
@@ -76,12 +60,10 @@ const vulnScan = new Task({
 
 const lint = new Task({
     name: "lint-go",
-    params: [buildPathParam],
     steps: [
         {
             name: "lint",
             image: "golangci/golangci-lint:latest",
-            workingDir: `${workspace.path}/${buildPathParam}`,
             command: ["golangci-lint", "run", "./..."],
         },
     ],
