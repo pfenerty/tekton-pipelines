@@ -1,5 +1,6 @@
 import {
     Param,
+    Workspace,
     Task,
     GitPipeline,
     TektonProject,
@@ -19,18 +20,34 @@ const refParam = new Param({ name: "ref", type: "string" });
 // ─── Status reporter ─────────────────────────────────────────────────────────
 const statusReporter = new GitHubStatusReporter();
 
+// ─── Cache workspaces ────────────────────────────────────────────────────────
+// Grype's vulnerability database is cached across runs to avoid re-downloading it.
+const grypeCache = new Workspace({ name: "grype-cache" });
+const npmCache = new Workspace({ name: "npm-cache" });
+
 // ─── Tasks ───────────────────────────────────────────────────────────────────
 const npmTest = new Task({
     name: "test-npm",
     statusReporter,
+    caches: [
+        {
+            key: ["package-lock.json"],
+            paths: ["node_modules"],
+            workspace: npmCache,
+            image: nodeImage,
+            compress: true,
+            workingDir: "$(workspaces.workspace.path)",
+        },
+    ],
     steps: [
         {
             name: "test",
             image: nodeImage,
-            command: ["sh", "-c"],
-            args: [
-                "npm ci && npm test; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC",
-            ],
+            workingDir: "$(workspaces.workspace.path)",
+            env: [{ name: "npm_config_cache", value: npmCache.path }],
+            script: `#!/bin/sh
+[ ! -d node_modules ] && npm ci
+npm test; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC`,
             onError: "continue",
         },
     ],
@@ -40,14 +57,25 @@ const npmBuild = new Task({
     name: "build-npm",
     needs: [npmTest],
     statusReporter,
+    caches: [
+        {
+            key: ["package-lock.json"],
+            paths: ["node_modules"],
+            workspace: npmCache,
+            image: nodeImage,
+            compress: true,
+            workingDir: "$(workspaces.workspace.path)",
+        },
+    ],
     steps: [
         {
             name: "build",
             image: nodeImage,
-            command: ["sh", "-c"],
-            args: [
-                "npm run build; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC",
-            ],
+            workingDir: "$(workspaces.workspace.path)",
+            env: [{ name: "npm_config_cache", value: npmCache.path }],
+            script: `#!/bin/sh
+[ ! -d node_modules ] && npm ci
+npm run build; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC`,
             onError: "continue",
         },
     ],
@@ -56,6 +84,7 @@ const npmBuild = new Task({
 const anchoreScann = new Task({
     name: "anchore-scan",
     params: [refParam],
+    workspaces: [grypeCache],
     statusReporter,
     steps: [
         {
@@ -73,6 +102,12 @@ const anchoreScann = new Task({
         {
             name: "scan",
             image: grypeImage,
+            env: [
+                {
+                    name: "GRYPE_DB_CACHE_DIR",
+                    value: grypeCache.path,
+                },
+            ],
             command: ["/grype"],
             args: [
                 "-v",
@@ -151,4 +186,23 @@ new TektonProject({
         secretKey: "secret",
     },
     gitRefParam: "ref",
+    // The nfs-client storage class uses NFS all_squash (anonuid=1024), which maps every
+    // client UID/GID to 1024 on the NFS server. Overriding the pod-level security context
+    // to match ensures the process UID equals the file owner UID, satisfying npm's cache
+    // ownership check and granting write access to PVC-backed cache directories.
+    defaultPodSecurityContext: {
+        runAsUser: 1024,
+        runAsGroup: 1024,
+        fsGroup: 1024,
+    },
+    caches: [
+        {
+            workspace: grypeCache,
+            storageSize: "2Gi",
+        },
+        {
+            workspace: npmCache,
+            storageSize: "2Gi",
+        },
+    ],
 });

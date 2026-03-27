@@ -2,7 +2,28 @@ import { App, Chart } from 'cdk8s';
 import { TektonInfraChart } from '../../charts/tekton-infra.chart';
 import { Pipeline } from './pipeline';
 import { Task } from './task';
+import { Workspace } from './workspace';
 import { TRIGGER_EVENTS } from './trigger-events';
+
+/**
+ * Specifies a persistent cache volume to provision and bind for a pipeline workspace.
+ * The generated PVC persists across PipelineRuns so tools can reuse cached data
+ * (e.g. a vulnerability database, downloaded dependencies, build artifacts).
+ */
+export interface CacheSpec {
+  /** The workspace that will be bound to the persistent volume across PipelineRuns. */
+  workspace: Workspace;
+  /** PVC storage size. Defaults to `'1Gi'`. */
+  storageSize?: string;
+  /**
+   * Name of the PersistentVolumeClaim resource to create.
+   * Defaults to `${projectName}-${workspace.name}` when the project has a name,
+   * or just `${workspace.name}` otherwise.
+   */
+  claimName?: string;
+  /** StorageClass for the PVC. Omitted when not set — cluster default applies. */
+  storageClassName?: string;
+}
 
 /** Options for constructing a {@link TektonProject}. */
 export interface TektonProjectOptions {
@@ -14,8 +35,10 @@ export interface TektonProjectOptions {
   pipelines: Pipeline[];
   /** Service account name for trigger infrastructure. Defaults to `"tekton-triggers"`. */
   serviceAccountName?: string;
-  /** PVC size for pipeline workspace volumes. Defaults to `"1Gi"`. */
+  /** PVC size for the ephemeral pipeline workspace volumes. Defaults to `"1Gi"`. */
   workspaceStorageSize?: string;
+  /** Persistent cache volumes to provision and bind in every PipelineRun. */
+  caches?: CacheSpec[];
   /** Kubernetes Secret reference for GitHub webhook validation. */
   webhookSecretRef?: { secretName: string; secretKey: string };
   /** Output directory for synthesized YAML. Defaults to cdk8s default (`dist`). */
@@ -26,6 +49,17 @@ export interface TektonProjectOptions {
   revisionParam?: string;
   /** Pipeline param name that receives the git ref (branch/tag ref). */
   gitRefParam?: string;
+  /**
+   * Pod-level security context merged on top of `DEFAULT_POD_SECURITY_CONTEXT` for every
+   * PipelineRun pod. Use this to override defaults such as `fsGroup` or `runAsUser`.
+   */
+  defaultPodSecurityContext?: Record<string, unknown>;
+  /**
+   * Container-level security context merged on top of `DEFAULT_STEP_SECURITY_CONTEXT` for
+   * every task's `stepTemplate`. Individual tasks can further override via their own
+   * `stepTemplate.securityContext`; individual steps can override via `step.securityContext`.
+   */
+  defaultStepSecurityContext?: Record<string, unknown>;
 }
 
 /**
@@ -58,7 +92,7 @@ export class TektonProject {
     // 2. Synth each unique Task
     for (const [name, task] of uniqueTasks) {
       const chart = new Chart(app, prefix ? `${prefix}-task-${name}` : `task-${name}`);
-      task.synth(chart, namespace, prefix || undefined);
+      task.synth(chart, namespace, prefix || undefined, opts.defaultStepSecurityContext);
     }
 
     // 3. Build each Pipeline
@@ -96,6 +130,14 @@ export class TektonProject {
         urlParam: opts.urlParam,
         revisionParam: opts.revisionParam,
         gitRefParam: opts.gitRefParam,
+        workspaceStorageSize: opts.workspaceStorageSize,
+        defaultPodSecurityContext: opts.defaultPodSecurityContext,
+        caches: (opts.caches ?? []).map(c => ({
+          workspaceName: c.workspace.name,
+          claimName: c.claimName ?? (prefix ? `${prefix}-${c.workspace.name}` : c.workspace.name),
+          storageSize: c.storageSize ?? '1Gi',
+          storageClassName: c.storageClassName,
+        })),
       });
     }
 

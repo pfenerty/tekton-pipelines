@@ -1,20 +1,20 @@
-import { Param } from './param';
-import { Workspace } from './workspace';
-import { Task } from './task';
-import { Pipeline, PipelineOptions } from './pipeline';
+import { Param } from "./param";
+import { Workspace } from "./workspace";
+import { Task } from "./task";
+import { Pipeline, PipelineOptions } from "./pipeline";
 
 /** Options for constructing a {@link GitPipeline}. */
 export interface GitPipelineOptions extends PipelineOptions {
-  /**
-   * Shared workspace mounted by all tasks. Auto-created when omitted.
-   * Defaults to `new Workspace({ name: "workspace" })`.
-   */
-  workspace?: Workspace;
-  /**
-   * Container image used for the git clone step.
-   * Defaults to `cgr.dev/chainguard/git:latest`.
-   */
-  cloneImage?: string;
+    /**
+     * Shared workspace mounted by all tasks. Auto-created when omitted.
+     * Defaults to `new Workspace({ name: "workspace" })`.
+     */
+    workspace?: Workspace;
+    /**
+     * Container image used for the git clone step.
+     * Defaults to `cgr.dev/chainguard/git:latest`.
+     */
+    cloneImage?: string;
 }
 
 /**
@@ -46,76 +46,88 @@ export interface GitPipelineOptions extends PipelineOptions {
  * ```
  */
 export class GitPipeline extends Pipeline {
-  /** The shared workspace mounted by all tasks. */
-  readonly workspace: Workspace;
-  /** The auto-generated git-clone task. */
-  readonly cloneTask: Task;
+    /** The shared workspace mounted by all tasks. */
+    readonly workspace: Workspace;
+    /** The auto-generated git-clone task. */
+    readonly cloneTask: Task;
 
-  constructor(opts: GitPipelineOptions) {
-    const workspace = opts.workspace ?? new Workspace({ name: 'workspace' });
-    const url = new Param({ name: 'url' });
-    const revision = new Param({ name: 'revision' });
+    constructor(opts: GitPipelineOptions) {
+        const workspace =
+            opts.workspace ?? new Workspace({ name: "workspace" });
+        const url = new Param({ name: "url" });
+        const revision = new Param({ name: "revision" });
 
-    const cloneTask = new Task({
-      name: 'git-clone',
-      params: [url, revision],
-      workspaces: [workspace],
-      steps: [{
-        name: 'clone',
-        image: opts.cloneImage ?? 'cgr.dev/chainguard/git:latest',
-        workingDir: workspace.path,
-        script: `#!/bin/sh
+        const cloneTask = new Task({
+            name: "git-clone",
+            params: [url, revision],
+            workspaces: [workspace],
+            steps: [
+                {
+                    name: "clone",
+                    image: opts.cloneImage ?? "cgr.dev/chainguard/git:latest",
+                    workingDir: workspace.path,
+                    env: [
+                        {
+                            name: "GIT_CONFIG_GLOBAL",
+                            value: `${workspace.path}/.gitconfig`,
+                        },
+                    ],
+                    script: `#!/bin/sh
 set -e
 git clone ${url} .
 git config --global --add safe.directory ${workspace.path}
 git checkout ${revision}`,
-      }],
-    });
+                },
+            ],
+        });
 
-    // Discover all user tasks transitively and inject the shared workspace and default
-    // workingDir. Both mutations are idempotent and safe when the same task instance
-    // appears in multiple GitPipelines.
-    const allUserTasks = GitPipeline._discoverUserTasks(opts.tasks);
-    for (const task of allUserTasks) {
-      if (!task.workspaces.some(w => w.name === workspace.name)) {
-        (task.workspaces as Workspace[]).push(workspace);
-      }
-      // Inject workspace path as the default workingDir via stepTemplate so task steps
-      // don't need to set it explicitly. User-provided stepTemplate.workingDir wins.
-      if (!(task as any).stepTemplate?.workingDir) {
-        (task as any).stepTemplate = { workingDir: workspace.path, ...(task.stepTemplate ?? {}) };
-      }
+        // Discover all user tasks transitively and inject the shared workspace and default
+        // workingDir. Both mutations are idempotent and safe when the same task instance
+        // appears in multiple GitPipelines.
+        const allUserTasks = GitPipeline._discoverUserTasks(opts.tasks);
+        for (const task of allUserTasks) {
+            if (!task.workspaces.some((w) => w.name === workspace.name)) {
+                (task.workspaces as Workspace[]).push(workspace);
+            }
+            // Inject workspace path as the default workingDir via stepTemplate so task steps
+            // don't need to set it explicitly. User-provided stepTemplate.workingDir wins.
+            if (!(task as any).stepTemplate?.workingDir) {
+                (task as any).stepTemplate = {
+                    workingDir: workspace.path,
+                    ...(task.stepTemplate ?? {}),
+                };
+            }
+        }
+
+        // Pass cloneTask as the first task so Pipeline.discoverAllTasks includes it
+        // in allTasks and synthesizes it into the pipeline spec.
+        super({ ...opts, tasks: [cloneTask, ...opts.tasks] });
+
+        this.workspace = workspace;
+        this.cloneTask = cloneTask;
     }
 
-    // Pass cloneTask as the first task so Pipeline.discoverAllTasks includes it
-    // in allTasks and synthesizes it into the pipeline spec.
-    super({ ...opts, tasks: [cloneTask, ...opts.tasks] });
-
-    this.workspace = workspace;
-    this.cloneTask = cloneTask;
-  }
-
-  /**
-   * Injects `git-clone` as a `runAfter` dependency for tasks that have no other
-   * ordering constraints (i.e. root tasks). This runs at pipeline-spec time and
-   * does not mutate any task's `needs` array.
-   */
-  protected override runAfterFor(task: Task): string[] {
-    const names = super.runAfterFor(task);
-    if (names.length === 0 && task !== this.cloneTask) {
-      return [this.cloneTask.name];
+    /**
+     * Injects `git-clone` as a `runAfter` dependency for tasks that have no other
+     * ordering constraints (i.e. root tasks). This runs at pipeline-spec time and
+     * does not mutate any task's `needs` array.
+     */
+    protected override runAfterFor(task: Task): string[] {
+        const names = super.runAfterFor(task);
+        if (names.length === 0 && task !== this.cloneTask) {
+            return [this.cloneTask.name];
+        }
+        return names;
     }
-    return names;
-  }
 
-  private static _discoverUserTasks(tasks: Task[]): Task[] {
-    const seen = new Set<Task>();
-    const visit = (t: Task): void => {
-      if (seen.has(t)) return;
-      seen.add(t);
-      for (const dep of t.needs) visit(dep);
-    };
-    for (const t of tasks) visit(t);
-    return [...seen];
-  }
+    private static _discoverUserTasks(tasks: Task[]): Task[] {
+        const seen = new Set<Task>();
+        const visit = (t: Task): void => {
+            if (seen.has(t)) return;
+            seen.add(t);
+            for (const dep of t.needs) visit(dep);
+        };
+        for (const t of tasks) visit(t);
+        return [...seen];
+    }
 }

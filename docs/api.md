@@ -186,12 +186,47 @@ Top-level orchestrator. Synthesizes all tasks, pipelines, and trigger infrastruc
 | `namespace` | `string` | *required* | Kubernetes namespace |
 | `pipelines` | `Pipeline[]` | *required* | Pipelines to synthesize |
 | `serviceAccountName` | `string` | `'tekton-triggers'` | Trigger SA name |
-| `workspaceStorageSize` | `string` | `'1Gi'` | PVC size |
+| `workspaceStorageSize` | `string` | `'1Gi'` | Ephemeral workspace PVC size per PipelineRun |
+| `caches` | `CacheSpec[]` | `[]` | Persistent cache volumes to provision and bind in every PipelineRun |
 | `webhookSecretRef` | `{ secretName: string; secretKey: string }` | — | Webhook secret |
 | `outdir` | `string` | cdk8s default | Output directory |
 | `urlParam` | `string` | `'url'` | Param name for repository URL |
 | `revisionParam` | `string` | `'revision'` | Param name for git revision |
 | `gitRefParam` | `string` | — | Param name for the git ref string (branch or tag ref, e.g. `refs/heads/main`). When set, the trigger infrastructure passes the ref to each PipelineRun. |
+
+#### `CacheSpec`
+
+Declares a persistent cache workspace. `TektonProject` generates a `PersistentVolumeClaim` manifest for the cache and binds it in every PipelineRun.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `workspace` | `Workspace` | *required* | Workspace to bind as a persistent volume |
+| `storageSize` | `string` | `'1Gi'` | PVC storage capacity |
+| `claimName` | `string` | `${name}-${workspace.name}` | PVC resource name; defaults to project name prefix + workspace name |
+| `storageClassName` | `string` | — | StorageClass; omitted to use cluster default |
+
+```typescript
+const grypeCache = new Workspace({ name: 'grype-cache' });
+
+const scanTask = new Task({
+  name: 'scan',
+  workspaces: [grypeCache],
+  steps: [{
+    name: 'scan',
+    image: 'ghcr.io/anchore/grype:latest',
+    env: [{ name: 'GRYPE_DB_CACHE_DIR', value: grypeCache.path }],
+    command: ['/grype', 'sbom:./sbom.json'],
+  }],
+});
+
+new TektonProject({
+  name: 'my-app',
+  namespace: 'ci',
+  pipelines: [...],
+  caches: [{ workspace: grypeCache, storageSize: '2Gi' }],
+});
+// → generates a PersistentVolumeClaim 'my-app-grype-cache' and binds it in every PipelineRun
+```
 
 ---
 
