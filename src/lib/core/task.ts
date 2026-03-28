@@ -55,9 +55,9 @@ export interface TaskCacheSpec {
     /** Image for the injected restore/save steps. Defaults to `'alpine'`. */
     image?: string;
     /**
-     * Compress the cache into a single gzip archive (`.tar.gz`) instead of copying
+     * Compress the cache into a single zstd archive (`.tar.zst`) instead of copying
      * path trees directly. Reduces NFS I/O from thousands of file operations to one
-     * read/write. Uses busybox tar — no extra packages required.
+     * read/write. Requires the step image to have `tar` with `--zstd` support and nushell.
      */
     compress?: boolean;
     /**
@@ -156,17 +156,17 @@ export class Task {
         const keyFiles = c.key.join(" ");
         let script: string;
         if (c.compress) {
-            script = `#!/bin/sh
-set -e
-HASH=$(cat ${keyFiles} | sha256sum | cut -c1-16)
-echo "$HASH" > ${hashFile}
-ARCHIVE="${wsPath}/$HASH.tar.gz"
-if [ -f "$ARCHIVE" ]; then
-  echo "cache hit ($HASH)"
-  tar -xzf "$ARCHIVE"
-else
-  echo "cache miss ($HASH)"
-fi`;
+            const keyFileList = c.key.map(f => `"${f}"`).join(", ");
+            script = `#!/usr/bin/env nu
+let hash = ([${keyFileList}] | each { |f| open --raw $f } | bytes collect | hash sha256 | str substring 0..15)
+$hash | save -f ${hashFile}
+let archive = $"${wsPath}/($hash).tar.zst"
+if ($archive | path exists) {
+  print $"cache hit ($hash)"
+  ^tar --zstd -xf $archive
+} else {
+  print $"cache miss ($hash)"
+}`;
         } else {
             const copyPaths = c.paths
                 .map(
@@ -201,14 +201,14 @@ fi`;
         let script: string;
         if (c.compress) {
             const archivePaths = c.paths.join(" ");
-            script = `#!/bin/sh
-HASH=$(cat ${hashFile} 2>/dev/null || echo "")
-[ -z "$HASH" ] && exit 0
-ARCHIVE="${wsPath}/$HASH.tar.gz"
-if [ ! -f "$ARCHIVE" ]; then
-  echo "saving cache ($HASH)"
-  tar -czf "$ARCHIVE" ${archivePaths}
-fi`;
+            script = `#!/usr/bin/env nu
+let hash = (try { open --raw ${hashFile} | str trim } catch { "" })
+if ($hash | str length) == 0 { exit 0 }
+let archive = $"${wsPath}/($hash).tar.zst"
+if not ($archive | path exists) {
+  print $"saving cache ($hash)"
+  ^tar --zstd -cf $archive ${archivePaths}
+}`;
         } else {
             const copyPaths = c.paths
                 .map((p) => `  cp -r "./${p}" "$CACHE_DIR/${p}"`)
