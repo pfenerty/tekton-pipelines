@@ -26,6 +26,10 @@ export interface TektonInfraChartProps extends ChartProps {
     gitRefParam?: string;
     /** PVC size for the ephemeral pipeline workspace. Defaults to `"1Gi"`. */
     workspaceStorageSize?: string;
+    /** StorageClass for the ephemeral workspace PVC. Omitted when not set — cluster default applies. */
+    workspaceStorageClass?: string;
+    /** Access modes for the ephemeral workspace PVC. Defaults to `["ReadWriteOnce"]`. */
+    workspaceAccessModes?: string[];
     /** Persistent cache volumes to provision as PVCs and bind in every PipelineRun. */
     caches?: {
         workspaceName: string;
@@ -121,6 +125,8 @@ export class TektonInfraChart extends Chart {
             revisionParam: props.revisionParam,
             gitRefParam: props.gitRefParam,
             workspaceStorageSize: props.workspaceStorageSize,
+            workspaceStorageClass: props.workspaceStorageClass,
+            workspaceAccessModes: props.workspaceAccessModes,
             cacheWorkspaces,
             defaultPodSecurityContext: props.defaultPodSecurityContext,
         };

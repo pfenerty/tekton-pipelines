@@ -17,6 +17,10 @@ export interface GitHubTriggerBaseProps {
     pipelineRef: string;
     /** PVC size for the workspace volume claim. Defaults to `"1Gi"`. */
     workspaceStorageSize?: string;
+    /** StorageClass for the ephemeral workspace PVC. Omitted when not set — cluster default applies. */
+    workspaceStorageClass?: string;
+    /** Access modes for the ephemeral workspace PVC. Defaults to `["ReadWriteOnce"]`. */
+    workspaceAccessModes?: string[];
     /** Service account for PipelineRun execution. Defaults to `"tekton-triggers"`. */
     serviceAccountName?: string;
     /** Optional prefix prepended to all resource names. */
@@ -183,7 +187,10 @@ export class GitHubTriggerBase extends Construct {
                                     name: "workspace",
                                     volumeClaimTemplate: {
                                         spec: {
-                                            accessModes: ["ReadWriteMany"],
+                                            accessModes: props.workspaceAccessModes ?? ["ReadWriteOnce"],
+                                            ...(props.workspaceStorageClass
+                                                ? { storageClassName: props.workspaceStorageClass }
+                                                : {}),
                                             resources: {
                                                 requests: {
                                                     storage: workspaceStorage,

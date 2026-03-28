@@ -37,6 +37,10 @@ export interface TektonProjectOptions {
   serviceAccountName?: string;
   /** PVC size for the ephemeral pipeline workspace volumes. Defaults to `"1Gi"`. */
   workspaceStorageSize?: string;
+  /** StorageClass for the ephemeral workspace PVC. Omitted when not set — cluster default applies. */
+  workspaceStorageClass?: string;
+  /** Access modes for the ephemeral workspace PVC. Defaults to `["ReadWriteOnce"]`. */
+  workspaceAccessModes?: string[];
   /** Persistent cache volumes to provision and bind in every PipelineRun. */
   caches?: CacheSpec[];
   /** Kubernetes Secret reference for GitHub webhook validation. */
@@ -131,6 +135,8 @@ export class TektonProject {
         revisionParam: opts.revisionParam,
         gitRefParam: opts.gitRefParam,
         workspaceStorageSize: opts.workspaceStorageSize,
+        workspaceStorageClass: opts.workspaceStorageClass,
+        workspaceAccessModes: opts.workspaceAccessModes,
         defaultPodSecurityContext: opts.defaultPodSecurityContext,
         caches: (opts.caches ?? []).map(c => ({
           workspaceName: c.workspace.name,
