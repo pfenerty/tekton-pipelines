@@ -158,7 +158,7 @@ export class Task {
         if (c.compress) {
             const keyFileList = c.key.map(f => `"${f}"`).join(", ");
             script = `#!/usr/bin/env nu
-let hash = ([${keyFileList}] | each { |f| open --raw $f } | bytes collect | hash sha256 | str substring 0..15)
+let hash = ([${keyFileList}] | each { |f| open $f } | str join | hash sha256 | str substring 0..15)
 $hash | save -f ${hashFile}
 let archive = $"${wsPath}/($hash).tar.zst"
 if ($archive | path exists) {
