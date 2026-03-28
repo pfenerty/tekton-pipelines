@@ -12,7 +12,7 @@ export interface GitPipelineOptions extends PipelineOptions {
     workspace?: Workspace;
     /**
      * Container image used for the git clone step.
-     * Defaults to `cgr.dev/chainguard/git:latest`.
+     * Defaults to `ghcr.io/pfenerty/apko-cicd/base:stable`.
      */
     cloneImage?: string;
 }
@@ -64,7 +64,7 @@ export class GitPipeline extends Pipeline {
             steps: [
                 {
                     name: "clone",
-                    image: opts.cloneImage ?? "cgr.dev/chainguard/git:latest",
+                    image: opts.cloneImage ?? "ghcr.io/pfenerty/apko-cicd/base:stable",
                     workingDir: workspace.path,
                     env: [
                         {
@@ -72,8 +72,7 @@ export class GitPipeline extends Pipeline {
                             value: `${workspace.path}/.gitconfig`,
                         },
                     ],
-                    script: `#!/bin/sh
-set -e
+                    script: `#!/usr/bin/env nu
 # Mark workspace as safe before any git operations that check directory ownership.
 # The workspace dir may be owned by root (local-path provisioner) while the pod
 # runs as a non-root uid; git 2.35.2+ rejects such repos without this config.
@@ -83,7 +82,26 @@ git remote add origin ${url}
 # Fetch all branch tips (depth=1) — GitHub doesn't allow fetching by arbitrary SHA.
 # The revision is always a branch tip in CI (push/PR events), so it will be present.
 git fetch --depth=1 origin '+refs/heads/*:refs/remotes/origin/*'
-git -c advice.detachedHead=false checkout ${revision}`,
+git -c advice.detachedHead=false checkout ${revision}
+
+# Capture git metadata for downstream tasks
+let sha = (git rev-parse HEAD | str trim)
+let short_sha = (git rev-parse --short HEAD | str trim)
+let commit_message = (git log -1 --format=%s | str trim)
+let author_name = (git log -1 --format=%an | str trim)
+let author_email = (git log -1 --format=%ae | str trim)
+let timestamp = (git log -1 --format=%aI | str trim)
+
+{
+    sha: $sha,
+    short_sha: $short_sha,
+    branch: "${revision}",
+    commit_message: $commit_message,
+    author_name: $author_name,
+    author_email: $author_email,
+    timestamp: $timestamp,
+    remote_url: "${url}",
+} | to json | save ${workspace.path}/git-metadata.json`,
                 },
             ],
         });
