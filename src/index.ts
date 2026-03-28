@@ -38,6 +38,15 @@ export type { GitHubTagTriggerProps } from "./lib/triggers/github-tag.trigger";
 export { TektonInfraChart } from "./charts/tekton-infra.chart";
 export type { TektonInfraChartProps } from "./charts/tekton-infra.chart";
 
+// Cache presets
+export {
+    goModuleCache,
+    npmCache,
+    mavenCache,
+    gradleCache,
+} from "./lib/presets/cache-presets";
+export type { CachePresetOptions } from "./lib/presets/cache-presets";
+
 // Constants
 export {
     TEKTON_API_V1,
@@ -47,6 +56,7 @@ export {
     DEFAULT_STEP_SECURITY_CONTEXT,
     RESTRICTED_STEP_SECURITY_CONTEXT,
     DEFAULT_STEP_RESOURCES,
+    DEFAULT_BASE_IMAGE,
     DEFAULT_SERVICE_ACCOUNT,
     DEFAULT_WORKSPACE_STORAGE,
 } from "./lib/constants";

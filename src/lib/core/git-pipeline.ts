@@ -2,6 +2,7 @@ import { Param } from "./param";
 import { Workspace } from "./workspace";
 import { Task } from "./task";
 import { Pipeline, PipelineOptions } from "./pipeline";
+import { DEFAULT_BASE_IMAGE } from "../constants";
 
 /** Options for constructing a {@link GitPipeline}. */
 export interface GitPipelineOptions extends PipelineOptions {
@@ -64,7 +65,7 @@ export class GitPipeline extends Pipeline {
             steps: [
                 {
                     name: "clone",
-                    image: opts.cloneImage ?? "ghcr.io/pfenerty/apko-cicd/base:stable",
+                    image: opts.cloneImage ?? DEFAULT_BASE_IMAGE,
                     workingDir: workspace.path,
                     env: [
                         {

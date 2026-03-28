@@ -71,6 +71,13 @@ export class Pipeline {
     } else {
       this.allTasks = regularTasks;
     }
+
+    // Collect cache-save finally tasks from all regular tasks and merge them
+    // into finallyTasks so they run in their own pods after build pods terminate.
+    const cacheFinallyTasks = regularTasks.flatMap(t => t.getCacheFinallyTasks());
+    if (cacheFinallyTasks.length > 0) {
+      (this.finallyTasks as Task[]).push(...cacheFinallyTasks);
+    }
   }
 
   protected discoverAllTasks(tasks: Task[]): Task[] {

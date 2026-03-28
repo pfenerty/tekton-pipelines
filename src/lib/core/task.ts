@@ -4,6 +4,7 @@ import {
     TEKTON_API_V1,
     DEFAULT_STEP_SECURITY_CONTEXT,
     DEFAULT_STEP_RESOURCES,
+    DEFAULT_BASE_IMAGE,
 } from "../constants";
 import { Param } from "./param";
 import { Workspace } from "./workspace";
@@ -46,7 +47,11 @@ export interface TaskStepSpec {
  * hit/miss strategy as GitLab CI's `cache:` keyword.
  */
 export interface TaskCacheSpec {
-    /** Files (relative to workingDir) whose combined content determines the cache key. */
+    /**
+     * Files (relative to workingDir) whose combined content determines the cache key.
+     * An empty array produces a fixed hash, meaning the cache always hits after the
+     * first run — useful for tool-managed caches like vulnerability databases.
+     */
     key: string[];
     /** Paths (relative to workingDir) to restore on hit and save on miss. */
     paths: string[];
@@ -66,6 +71,46 @@ export interface TaskCacheSpec {
      * workspace expression, e.g. `$(workspaces.workspace.path)`.
      */
     workingDir?: string;
+    /**
+     * zstd compression level (1–19). Lower levels are faster and use less memory.
+     * Level 1 uses ~1 MB working memory and still achieves ~2.5× compression.
+     * Only applies when `compress` is `true`. Defaults to `1`.
+     */
+    compressionLevel?: number;
+    /**
+     * Explicit `computeResources` for the injected cache restore and save steps,
+     * overriding the stepTemplate default. Useful for constraining memory when the
+     * build step consumes most of the node's RAM.
+     */
+    computeResources?: {
+        requests?: { cpu?: string; memory?: string };
+        limits?: { cpu?: string; memory?: string };
+    };
+    /**
+     * Maximum number of cache archive entries to keep per workspace. During save,
+     * entries older than the newest `maxEntries` are deleted. Defaults to `3`.
+     * Set to `0` to disable eviction.
+     */
+    maxEntries?: number;
+    /**
+     * Strategy for running the cache save step.
+     *
+     * - `"step"` (default) — save runs as a step within the build pod. Fastest,
+     *   but shares node memory with the build steps; can cause OOM on memory-
+     *   intensive builds (e.g. large Go projects on constrained nodes).
+     *
+     * - `"finally"` — save runs as a separate Tekton *finally* task in its own
+     *   pod. The build pod is fully terminated (and its memory reclaimed) before
+     *   compression starts. Adds ~10–15 s scheduling overhead.
+     */
+    saveStrategy?: "step" | "finally";
+    /**
+     * Always overwrite the cache archive on save, even if one already exists
+     * for the current hash. Use this for tool-managed caches where the tool
+     * updates its data in-place (e.g. grype vulnerability database).
+     * Defaults to `false`.
+     */
+    forceSave?: boolean;
 }
 
 /** Options for constructing a {@link Task}. */
@@ -149,23 +194,55 @@ export class Task {
         }
     }
 
-    private static _makeCacheRestoreStep(c: TaskCacheSpec): TaskStepSpec {
+    /** Returns the hash-file path for the given cache spec. */
+    private static _hashFilePath(c: TaskCacheSpec, taskName?: string): string {
+        const wsPath = `$(workspaces.${c.workspace.name}.path)`;
+        if (c.saveStrategy === "finally") {
+            // Write to the cache PVC so it survives across pods.
+            return `${wsPath}/.cache-hash${taskName ? `-${taskName}` : ""}`;
+        }
+        // Pod-local path (default).
+        return `/tekton/home/.cache-${c.workspace.name}-hash`;
+    }
+
+    private static _makeCacheRestoreStep(
+        c: TaskCacheSpec,
+        taskName?: string,
+    ): TaskStepSpec {
         const wsName = c.workspace.name;
         const wsPath = `$(workspaces.${wsName}.path)`;
-        const hashFile = `/tekton/home/.cache-${wsName}-hash`;
+        const hashFile = Task._hashFilePath(c, taskName);
         const keyFiles = c.key.join(" ");
         let script: string;
         if (c.compress) {
-            const keyFileList = c.key.map(f => `"${f}"`).join(", ");
+            let hashExpr: string;
+            if (c.key.length === 0) {
+                // Static hash — always the same key, always hits after the first run.
+                hashExpr = `let hash = ("" | hash sha256 | str substring 0..15)`;
+            } else {
+                const keyFileList = c.key.map((f) => `"${f}"`).join(", ");
+                hashExpr = `let hash = (
+  [${keyFileList}]
+  | each { |f| if ($f | path exists) { open --raw $f } else { "" } }
+  | str join | hash sha256 | str substring 0..15
+)`;
+            }
             script = `#!/usr/bin/env nu
-let hash = ([${keyFileList}] | each { |f| open $f } | str join | hash sha256 | str substring 0..15)
+def log [msg: string] {
+  print $"[(date now | format date '%H:%M:%S')] cache-restore-${wsName}: ($msg)"
+}
+
+${hashExpr}
 $hash | save -f ${hashFile}
 let archive = $"${wsPath}/($hash).tar.zst"
+
 if ($archive | path exists) {
-  print $"cache hit ($hash)"
-  ^tar --zstd -xf $archive
+  let size = (ls $archive | get size.0)
+  log $"hit ($hash) archive=($archive) size=($size)"
+  ^zstd -d -T1 -c $archive | ^tar xf -
+  log "restored"
 } else {
-  print $"cache miss ($hash)"
+  log $"miss ($hash) archive=($archive)"
 }`;
         } else {
             const copyPaths = c.paths
@@ -174,9 +251,13 @@ if ($archive | path exists) {
                         `  [ -e "$CACHE_DIR/${p}" ] && cp -r "$CACHE_DIR/${p}" "./${p}" || true`,
                 )
                 .join("\n");
+            const hashCmd =
+                c.key.length === 0
+                    ? `HASH=$(echo -n "" | sha256sum | cut -c1-16)`
+                    : `HASH=$(cat ${keyFiles} | sha256sum | cut -c1-16)`;
             script = `#!/bin/sh
 set -e
-HASH=$(cat ${keyFiles} | sha256sum | cut -c1-16)
+${hashCmd}
 echo "$HASH" > ${hashFile}
 CACHE_DIR="${wsPath}/$HASH"
 if [ -d "$CACHE_DIR" ]; then
@@ -188,47 +269,78 @@ fi`;
         }
         return {
             name: `cache-restore-${wsName}`,
-            image: c.image ?? "alpine",
+            image: c.image ?? DEFAULT_BASE_IMAGE,
             script,
             ...(c.workingDir ? { workingDir: c.workingDir } : {}),
+            ...(c.computeResources
+                ? { computeResources: c.computeResources }
+                : {}),
         };
     }
 
-    private static _makeCacheSaveStep(c: TaskCacheSpec): TaskStepSpec {
+    private static _makeCacheSaveStep(
+        c: TaskCacheSpec,
+        taskName?: string,
+    ): TaskStepSpec {
         const wsName = c.workspace.name;
         const wsPath = `$(workspaces.${wsName}.path)`;
-        const hashFile = `/tekton/home/.cache-${wsName}-hash`;
+        const hashFile = Task._hashFilePath(c, taskName);
+        const compressionLevel = c.compressionLevel ?? 1;
+        const maxEntries = c.maxEntries ?? 3;
+        const forceSave = c.forceSave ?? false;
         let script: string;
         if (c.compress) {
-            const archivePaths = c.paths.join(" ");
+            const pathList = c.paths.map((p) => `"${p}"`).join(", ");
+            const skipExisting = forceSave
+                ? ""
+                : `if ($archive | path exists) { log $"($hash) exists, skipping"; exit 0 }\n`;
             script = `#!/usr/bin/env nu
+def log [msg: string] {
+  print $"[(date now | format date '%H:%M:%S')] cache-save-${wsName}: ($msg)"
+}
+
 let hash = (try { open --raw ${hashFile} | str trim } catch { "" })
-if ($hash | str length) == 0 { exit 0 }
+if ($hash | is-empty) { log "no hash, skipping"; exit 0 }
+
 let archive = $"${wsPath}/($hash).tar.zst"
-if not ($archive | path exists) {
-  print $"saving cache ($hash)"
-  ^tar --zstd -cf $archive ${archivePaths}
-}`;
+${skipExisting}
+let paths = [${pathList}] | where { |p| ($p | path exists) }
+if ($paths | is-empty) { log "no paths to cache"; exit 0 }
+
+# Evict old entries
+let max = ${maxEntries}
+if $max > 0 {
+  let entries = (try { ls ${wsPath}/*.tar.zst | sort-by modified | reverse | skip $max } catch { [] })
+  for e in $entries { log $"evicting ($e.name | path basename)"; rm $e.name }
+}
+
+log $"saving ($hash) ..."
+^tar cf - ...$paths | ^zstd -${compressionLevel} -T1${forceSave ? " -f" : ""} -o $archive
+
+let size = (ls $archive | get size.0)
+log $"saved archive=($archive) size=($size)"`;
         } else {
             const copyPaths = c.paths
                 .map((p) => `  cp -r "./${p}" "$CACHE_DIR/${p}"`)
                 .join("\n");
+            const saveCondition = forceSave
+                ? `echo "saving cache ($HASH)"\n  mkdir -p "$CACHE_DIR"\n${copyPaths}`
+                : `if [ ! -d "$CACHE_DIR" ]; then\n  echo "saving cache ($HASH)"\n  mkdir -p "$CACHE_DIR"\n${copyPaths}\nfi`;
             script = `#!/bin/sh
 HASH=$(cat ${hashFile} 2>/dev/null || echo "")
 [ -z "$HASH" ] && exit 0
 CACHE_DIR="${wsPath}/$HASH"
-if [ ! -d "$CACHE_DIR" ]; then
-  echo "saving cache ($HASH)"
-  mkdir -p "$CACHE_DIR"
-${copyPaths}
-fi`;
+${saveCondition}`;
         }
         return {
             name: `cache-save-${wsName}`,
-            image: c.image ?? "alpine",
+            image: c.image ?? DEFAULT_BASE_IMAGE,
             script,
             onError: "continue" as const,
             ...(c.workingDir ? { workingDir: c.workingDir } : {}),
+            ...(c.computeResources
+                ? { computeResources: c.computeResources }
+                : {}),
         };
     }
 
@@ -253,8 +365,12 @@ fi`;
             ...DEFAULT_STEP_SECURITY_CONTEXT,
             ...(stepSecurityContext ?? {}),
         };
-        const restoreSteps = this.caches.map(Task._makeCacheRestoreStep);
-        const saveSteps = this.caches.map(Task._makeCacheSaveStep);
+        const restoreSteps = this.caches.map((c) =>
+            Task._makeCacheRestoreStep(c, this.name),
+        );
+        const saveSteps = this.caches
+            .filter((c) => c.saveStrategy !== "finally")
+            .map((c) => Task._makeCacheSaveStep(c, this.name));
         const reporterStep =
             this.statusReporter && this.statusContext
                 ? [this.statusReporter.finalStep(this.statusContext)]
@@ -288,6 +404,30 @@ fi`;
                 steps,
             },
         });
+    }
+
+    /**
+     * Returns standalone Task objects for caches that use `saveStrategy: "finally"`.
+     * These tasks are intended to be wired into the pipeline's `finally` block so
+     * they run in their own pod after the build pod has terminated.
+     */
+    getCacheFinallyTasks(): Task[] {
+        return this.caches
+            .filter((c) => c.saveStrategy === "finally")
+            .map(
+                (c) =>
+                    new Task({
+                        name: `cache-save-${c.workspace.name}-${this.name}`,
+                        workspaces: [
+                            c.workspace,
+                            ...this.workspaces.filter(
+                                (w) => w.name !== c.workspace.name,
+                            ),
+                        ],
+                        steps: [Task._makeCacheSaveStep(c, this.name)],
+                        stepTemplate: this.stepTemplate,
+                    }),
+            );
     }
 
     /** @internal Generates the pipeline task spec used inside a Pipeline resource. */

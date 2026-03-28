@@ -52,6 +52,14 @@ export const RESTRICTED_STEP_SECURITY_CONTEXT = {
 } as const;
 
 /**
+ * Default container image for injected steps (cache restore/save, status
+ * reporting, git clone). Provides nushell, zstd, tar, curl, git, and
+ * other CI/CD tooling out of the box.
+ */
+export const DEFAULT_BASE_IMAGE =
+    "ghcr.io/pfenerty/apko-cicd/base:stable" as const;
+
+/**
  * Default CPU/memory requests and limits applied to each task step.
  * Override per-step via the `computeResources` field on `TaskStepSpec`.
  */

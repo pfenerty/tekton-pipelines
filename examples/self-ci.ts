@@ -6,13 +6,13 @@ import {
     TektonProject,
     TRIGGER_EVENTS,
     GitHubStatusReporter,
+    DEFAULT_BASE_IMAGE,
 } from "../src";
 
 // ─── Images ──────────────────────────────────────────────────────────────────
-const nodeImage = "node:22-alpine";
-const syftImage = "ghcr.io/anchore/syft:v1.42.3";
-const grypeImage = "ghcr.io/anchore/grype:v0.110.0";
-const grantImage = "ghcr.io/anchore/grant:v0.6.4";
+const nodeImage = "ghcr.io/pfenerty/apko-cicd/nodejs:22";
+const syftImage = "ghcr.io/pfenerty/apko-cicd/syft:1.42.3";
+const grypeImage = "ghcr.io/pfenerty/apko-cicd/grype:0.110.0";
 
 // ─── Params ──────────────────────────────────────────────────────────────────
 const refParam = new Param({ name: "ref", type: "string" });
@@ -34,7 +34,7 @@ const npmTest = new Task({
             key: ["package-lock.json"],
             paths: ["node_modules"],
             workspace: npmCache,
-            image: nodeImage,
+            saveStrategy: "finally",
             compress: true,
             workingDir: "$(workspaces.workspace.path)",
         },
@@ -62,7 +62,6 @@ const npmBuild = new Task({
             key: ["package-lock.json"],
             paths: ["node_modules"],
             workspace: npmCache,
-            image: nodeImage,
             compress: true,
             workingDir: "$(workspaces.workspace.path)",
         },
@@ -84,20 +83,41 @@ npm run build; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC`,
 const anchoreScann = new Task({
     name: "anchore-scan",
     params: [refParam],
-    workspaces: [grypeCache],
     statusReporter,
+    caches: [
+        {
+            key: [],
+            paths: ["grype-db"],
+            workspace: grypeCache,
+            compress: true,
+            forceSave: true,
+            maxEntries: 1,
+            workingDir: "$(workspaces.workspace.path)",
+        },
+    ],
     steps: [
         {
             name: "generate-sbom",
             image: syftImage,
-            command: ["/syft"],
-            args: [
-                "file:package-lock.json",
-                "-o",
-                "cyclonedx-json=sbom.cyclonedx.json",
-                "-o",
-                "syft-table",
-            ],
+            script: `#!/usr/bin/env nu
+def log [msg: string] {
+  print $"[(date now | format date '%H:%M:%S')] generate-sbom: ($msg)"
+}
+
+log "generating SBOM from package-lock.json"
+let start = (date now)
+
+^syft file:package-lock.json -o cyclonedx-json=sbom.cyclonedx.json -o syft-table
+
+let elapsed = ((date now) - $start | into int) / 1_000_000_000
+log $"done in ($elapsed)s"
+
+if ("sbom.cyclonedx.json" | path exists) {
+  let size = (ls sbom.cyclonedx.json | get size.0)
+  log $"sbom size: ($size)"
+} else {
+  log "warning: sbom.cyclonedx.json not found"
+}`,
         },
         {
             name: "scan",
@@ -105,34 +125,34 @@ const anchoreScann = new Task({
             env: [
                 {
                     name: "GRYPE_DB_CACHE_DIR",
-                    value: grypeCache.path,
+                    value: "$(workspaces.workspace.path)/grype-db",
                 },
             ],
-            command: ["/grype"],
-            args: [
-                "-v",
-                "sbom:./sbom.cyclonedx.json",
-                "-o",
-                "sarif=./scan.sarif",
-            ],
-            onError: "continue",
-        },
-        {
-            name: "check-licenses",
-            image: grantImage,
-            command: ["/grant"],
-            args: [
-                "check",
-                "./sbom.cyclonedx.json",
-                "-o",
-                "table",
-                "--dry-run",
-            ],
+            script: `#!/usr/bin/env nu
+def log [msg: string] {
+  print $"[(date now | format date '%H:%M:%S')] grype-scan: ($msg)"
+}
+
+log "scanning sbom.cyclonedx.json for vulnerabilities"
+let start = (date now)
+
+# Run grype directly so stdout/stderr stream in real time.
+# onError: continue prevents the step failure from stopping the pipeline;
+# the exit code is captured by the upload-sarif step via /tekton/steps/step-scan/exitCode.
+^grype -v sbom:./sbom.cyclonedx.json -o sarif=./scan.sarif
+
+let elapsed = ((date now) - $start | into int) / 1_000_000_000
+log $"done in ($elapsed)s"
+
+if ("scan.sarif" | path exists) {
+  let size = (ls scan.sarif | get size.0)
+  log $"sarif size: ($size)"
+}`,
             onError: "continue",
         },
         {
             name: "upload-sarif",
-            image: "cgr.dev/chainguard/curl:latest-dev",
+            image: DEFAULT_BASE_IMAGE,
             env: [
                 {
                     name: "GITHUB_TOKEN",
@@ -141,22 +161,47 @@ const anchoreScann = new Task({
                     },
                 },
             ],
-            command: ["sh", "-c"],
-            args: [
-                `GRYPE_EC=$(cat /tekton/steps/step-scan/exitCode 2>/dev/null || echo 0)
-echo "$GRYPE_EC" > /tekton/home/.exit-code
-if [ -s scan.sarif ]; then
-  REF="$(params.ref)"
-  case "$REF" in refs/*) ;; *) REF="refs/heads/$REF" ;; esac
-  SARIF=$(gzip -c scan.sarif | base64 | tr -d '\\n')
-  curl -fsS -X POST \\
-    -H "Authorization: token $GITHUB_TOKEN" \\
-    -H "Accept: application/vnd.github+json" \\
-    -H "Content-Type: application/json" \\
-    -d "{\\"commit_sha\\":\\"$(params.revision)\\",\\"ref\\":\\"$REF\\",\\"sarif\\":\\"$SARIF\\"}" \\
-    "https://api.github.com/repos/$(params.repo-full-name)/code-scanning/sarifs"
-fi`,
-            ],
+            script: `#!/usr/bin/env nu
+def log [msg: string] {
+  print $"[(date now | format date '%H:%M:%S')] upload-sarif: ($msg)"
+}
+
+# Capture grype exit code for status reporting
+let grype_ec = (try { open --raw /tekton/steps/step-scan/exitCode | str trim | into int } catch { 0 })
+$grype_ec | into string | save -f /tekton/home/.exit-code
+log $"grype exit-code: ($grype_ec)"
+
+if not ("scan.sarif" | path exists) or (ls scan.sarif | get size.0) == 0B {
+  log "no sarif to upload, skipping"
+  exit 0
+}
+
+let ref_raw = "$(params.ref)"
+let ref = if ($ref_raw | str starts-with "refs/") { $ref_raw } else { $"refs/heads/($ref_raw)" }
+log $"ref: ($ref)"
+
+# Base64-encode the gzipped SARIF
+let sarif_b64 = (open --raw scan.sarif | ^gzip -c | encode base64)
+log $"sarif payload: (($sarif_b64 | str length) / 1024 | math round)KB base64"
+
+let url = "https://api.github.com/repos/$(params.repo-full-name)/code-scanning/sarifs"
+let body = {
+  commit_sha: "$(params.revision)",
+  ref: $ref,
+  sarif: $sarif_b64,
+}
+
+log $"POST ($url)"
+
+try {
+  http post $url $body -t application/json -H [
+    Authorization $"token ($env.GITHUB_TOKEN)"
+    Accept "application/vnd.github+json"
+  ]
+  log "uploaded"
+} catch { |e|
+  log $"upload failed: ($e.msg)"
+}`,
             onError: "continue",
         },
     ],

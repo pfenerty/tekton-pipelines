@@ -3,7 +3,7 @@ import { App, Chart } from 'cdk8s';
 import { Task } from './task';
 import { Param } from './param';
 import { Workspace } from './workspace';
-import { RESTRICTED_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES } from '../constants';
+import { RESTRICTED_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES, DEFAULT_BASE_IMAGE } from '../constants';
 import { GitHubStatusReporter } from '../reporters/github-status-reporter';
 
 describe('Task', () => {
@@ -305,26 +305,30 @@ describe('Task', () => {
     describe('compress: true', () => {
       const compressedSpec = { ...cacheSpec, compress: true as const };
 
-      it('restore script uses tar -I zstd and .tar.zst archive', () => {
+      it('restore script uses nushell with tar --zstd and .tar.zst archive', () => {
         const app = new App();
         const chart = new Chart(app, 'test');
         const t = new Task({ name: 'c', steps: [{ name: 's', image: 'alpine' }], caches: [compressedSpec] });
         t.synth(chart, 'ns');
         const step = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-restore-npm-cache');
-        expect(step.script).toContain('tar -xzf "$ARCHIVE"');
-        expect(step.script).toContain('.tar.gz');
-        expect(step.script).toContain('[ -f "$ARCHIVE" ]');
+        expect(step.script).toContain('#!/usr/bin/env nu');
+        expect(step.script).toContain('zstd -d -T1 -c');
+        expect(step.script).toContain('tar xf -');
+        expect(step.script).toContain('.tar.zst');
+        expect(step.script).toContain('path exists');
+        expect(step.script).toContain('hash sha256');
       });
 
-      it('save script uses tar -I zstd and .tar.zst archive', () => {
+      it('save script uses nushell with tar --zstd and .tar.zst archive', () => {
         const app = new App();
         const chart = new Chart(app, 'test');
         const t = new Task({ name: 'c', steps: [{ name: 's', image: 'alpine' }], caches: [compressedSpec] });
         t.synth(chart, 'ns');
         const step = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-save-npm-cache');
-        expect(step.script).toContain('tar -czf "$ARCHIVE"');
-        expect(step.script).toContain('.tar.gz');
-        expect(step.script).toContain('[ ! -f "$ARCHIVE" ]');
+        expect(step.script).toContain('#!/usr/bin/env nu');
+        expect(step.script).toContain('tar cf -');
+        expect(step.script).toContain('zstd -');
+        expect(step.script).toContain('.tar.zst');
       });
 
       it('scripts do not require any package installation', () => {
@@ -377,6 +381,266 @@ describe('Task', () => {
         expect(restore.script).not.toContain('tar');
         expect(save.script).toContain('cp -r');
         expect(save.script).not.toContain('tar');
+      });
+    });
+
+    describe('default cache image', () => {
+      it('uses DEFAULT_BASE_IMAGE when no image specified', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [cacheSpec],
+        });
+        t.synth(chart, 'ns');
+        const steps = chart.toJson()[0].spec.steps;
+        const restore = steps.find((s: any) => s.name === 'cache-restore-npm-cache');
+        const save = steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(restore.image).toBe(DEFAULT_BASE_IMAGE);
+        expect(save.image).toBe(DEFAULT_BASE_IMAGE);
+      });
+
+      it('respects custom image override', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, image: 'node:22-alpine' }],
+        });
+        t.synth(chart, 'ns');
+        const steps = chart.toJson()[0].spec.steps;
+        const restore = steps.find((s: any) => s.name === 'cache-restore-npm-cache');
+        expect(restore.image).toBe('node:22-alpine');
+      });
+    });
+
+    describe('compressionLevel', () => {
+      it('defaults to zstd level 1 in save script', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true }],
+        });
+        t.synth(chart, 'ns');
+        const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(save.script).toContain('zstd -1 -T1');
+      });
+
+      it('uses custom compressionLevel in save script', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true, compressionLevel: 5 }],
+        });
+        t.synth(chart, 'ns');
+        const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(save.script).toContain('zstd -5 -T1');
+      });
+    });
+
+    describe('computeResources', () => {
+      it('propagates computeResources to cache steps', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const resources = { requests: { cpu: '50m', memory: '64Mi' }, limits: { memory: '256Mi' } };
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, computeResources: resources }],
+        });
+        t.synth(chart, 'ns');
+        const steps = chart.toJson()[0].spec.steps;
+        const restore = steps.find((s: any) => s.name === 'cache-restore-npm-cache');
+        const save = steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(restore.computeResources).toEqual(resources);
+        expect(save.computeResources).toEqual(resources);
+      });
+
+      it('omits computeResources when not specified', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [cacheSpec],
+        });
+        t.synth(chart, 'ns');
+        const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-restore-npm-cache');
+        expect(restore.computeResources).toBeUndefined();
+      });
+    });
+
+    describe('maxEntries', () => {
+      it('defaults to 3 in save script', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true }],
+        });
+        t.synth(chart, 'ns');
+        const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(save.script).toContain('let max = 3');
+      });
+
+      it('uses custom maxEntries in save script', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true, maxEntries: 5 }],
+        });
+        t.synth(chart, 'ns');
+        const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(save.script).toContain('let max = 5');
+      });
+
+      it('eviction logic present in compressed save script', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true }],
+        });
+        t.synth(chart, 'ns');
+        const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(save.script).toContain('sort-by modified');
+        expect(save.script).toContain('evicting');
+      });
+    });
+
+    describe('saveStrategy: "finally"', () => {
+      const finallySpec = { ...cacheSpec, compress: true, saveStrategy: 'finally' as const };
+
+      it('excludes save step from task when saveStrategy is "finally"', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [finallySpec],
+        });
+        t.synth(chart, 'ns');
+        const names = chart.toJson()[0].spec.steps.map((s: any) => s.name);
+        expect(names).toContain('cache-restore-npm-cache');
+        expect(names).not.toContain('cache-save-npm-cache');
+      });
+
+      it('restore step writes hash to cache PVC for finally strategy', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [finallySpec],
+        });
+        t.synth(chart, 'ns');
+        const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-restore-npm-cache');
+        // Hash file should be on the cache PVC, not /tekton/home
+        expect(restore.script).toContain('$(workspaces.npm-cache.path)/.cache-hash-c');
+        expect(restore.script).not.toContain('/tekton/home');
+      });
+
+      it('getCacheFinallyTasks returns save tasks for finally strategy', () => {
+        const t = new Task({
+          name: 'build-go',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [finallySpec],
+        });
+        const finallyTasks = t.getCacheFinallyTasks();
+        expect(finallyTasks).toHaveLength(1);
+        expect(finallyTasks[0].name).toBe('cache-save-npm-cache-build-go');
+        expect(finallyTasks[0].workspaces.map(w => w.name)).toContain('npm-cache');
+      });
+
+      it('getCacheFinallyTasks returns empty for step strategy', () => {
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true }],
+        });
+        expect(t.getCacheFinallyTasks()).toHaveLength(0);
+      });
+
+      it('step strategy still uses pod-local hash file', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true }],
+        });
+        t.synth(chart, 'ns');
+        const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-restore-npm-cache');
+        expect(restore.script).toContain('/tekton/home/.cache-npm-cache-hash');
+      });
+    });
+
+    describe('forceSave', () => {
+      it('compressed save skips existing archive by default', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true }],
+        });
+        t.synth(chart, 'ns');
+        const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(save.script).toContain('exists, skipping');
+      });
+
+      it('forceSave removes the skip-existing check', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, compress: true, forceSave: true }],
+        });
+        t.synth(chart, 'ns');
+        const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-save-npm-cache');
+        expect(save.script).not.toContain('exists, skipping');
+        expect(save.script).toContain('saving');
+      });
+    });
+
+    describe('empty key (static hash)', () => {
+      it('compressed restore uses static hash when key is empty', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, key: [], compress: true }],
+        });
+        t.synth(chart, 'ns');
+        const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-restore-npm-cache');
+        expect(restore.script).toContain('"" | hash sha256');
+        expect(restore.script).not.toContain('open --raw');
+      });
+
+      it('uncompressed restore uses static hash when key is empty', () => {
+        const app = new App();
+        const chart = new Chart(app, 'test');
+        const t = new Task({
+          name: 'c',
+          steps: [{ name: 's', image: 'alpine' }],
+          caches: [{ ...cacheSpec, key: [] }],
+        });
+        t.synth(chart, 'ns');
+        const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'cache-restore-npm-cache');
+        expect(restore.script).toContain('echo -n ""');
+        expect(restore.script).toContain('sha256sum');
       });
     });
 
