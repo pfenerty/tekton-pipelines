@@ -10,11 +10,11 @@ synth:
 	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n' > synth-output/kustomization.yaml
 	@for f in synth-output/*.k8s.yaml; do printf '  - %s\n' "$$(basename $$f)"; done >> synth-output/kustomization.yaml
 
-## Synthesize self-CI pipeline into ci-pipeline/
+## Synthesize self-CI pipeline into .tektonic/
 synth-ci:
 	flox activate -- npx ts-node examples/self-ci.ts
-	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n' > ci-pipeline/kustomization.yaml
-	@for f in ci-pipeline/*.k8s.yaml; do printf '  - %s\n' "$$(basename $$f)"; done >> ci-pipeline/kustomization.yaml
+	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n' > .tektonic//kustomization.yaml
+	@for f in .tektonic//*.k8s.yaml; do printf '  - %s\n' "$$(basename $$f)"; done >> .tektonic//kustomization.yaml
 
 ## Dry-run diff against the current cluster state
 ## Requires: kubectl configured, Tekton installed in $(NAMESPACE)

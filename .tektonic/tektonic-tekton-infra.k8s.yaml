@@ -1,0 +1,269 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tektonic-tekton-triggers
+  namespace: tektonic-ci
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tektonic-tekton-triggers-eventlistener
+  namespace: tektonic-ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-roles
+subjects:
+  - kind: ServiceAccount
+    name: tektonic-tekton-triggers
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tektonic-tekton-triggers-eventlistener
+  namespace: tektonic-ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-eventlistener-clusterroles
+subjects:
+  - kind: ServiceAccount
+    name: tektonic-tekton-triggers
+    namespace: tektonic-ci
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tektonic-grype-cache
+  namespace: tektonic-ci
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tektonic-npm-cache
+  namespace: tektonic-ci
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: tektonic-github-push
+  namespace: tektonic-ci
+spec:
+  params:
+    - name: gitrevision
+      value: $(body.head_commit.id)
+    - name: namespace
+      value: tektonic-ci
+    - name: gitrepositoryurl
+      value: https://github.com/$(body.repository.full_name)
+    - name: projectname
+      value: $(body.repository.name)
+    - name: repo-full-name
+      value: $(body.repository.full_name)
+    - name: gitref
+      value: $(body.ref)
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: tektonic-github-push-trigger-template
+  namespace: tektonic-ci
+spec:
+  params:
+    - description: The git revision
+      name: gitrevision
+    - description: The git repository url
+      name: gitrepositoryurl
+    - description: The namespace to create the resources
+      name: namespace
+    - description: name of the project
+      name: projectname
+    - description: GitHub owner/repo
+      name: repo-full-name
+    - description: The git ref
+      name: gitref
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: tektonic-github-push-pipeline-run-
+        namespace: $(tt.params.namespace)
+      spec:
+        params:
+          - name: revision
+            value: $(tt.params.gitrevision)
+          - name: url
+            value: $(tt.params.gitrepositoryurl)
+          - name: project-name
+            value: $(tt.params.projectname)
+          - name: repo-full-name
+            value: $(tt.params.repo-full-name)
+          - name: ref
+            value: $(tt.params.gitref)
+        pipelineRef:
+          name: tektonic-npm-push
+        taskRunTemplate:
+          podTemplate:
+            securityContext:
+              fsGroup: 1024
+              runAsGroup: 1024
+              runAsNonRoot: true
+              runAsUser: 1024
+              seccompProfile:
+                type: RuntimeDefault
+          serviceAccountName: tektonic-tekton-triggers
+        workspaces:
+          - name: workspace
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+          - name: grype-cache
+            persistentVolumeClaim:
+              claimName: tektonic-grype-cache
+          - name: npm-cache
+            persistentVolumeClaim:
+              claimName: tektonic-npm-cache
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: tektonic-github-pull-request
+  namespace: tektonic-ci
+spec:
+  params:
+    - name: gitrevision
+      value: $(body.pull_request.head.sha)
+    - name: namespace
+      value: tektonic-ci
+    - name: gitrepositoryurl
+      value: https://github.com/$(body.repository.full_name)
+    - name: projectname
+      value: $(body.repository.name)
+    - name: repo-full-name
+      value: $(body.repository.full_name)
+    - name: gitref
+      value: $(body.pull_request.head.ref)
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: tektonic-github-pull-request-trigger-template
+  namespace: tektonic-ci
+spec:
+  params:
+    - description: The git revision
+      name: gitrevision
+    - description: The git repository url
+      name: gitrepositoryurl
+    - description: The namespace to create the resources
+      name: namespace
+    - description: name of the project
+      name: projectname
+    - description: GitHub owner/repo
+      name: repo-full-name
+    - description: The git ref
+      name: gitref
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: tektonic-github-pull-request-pipeline-run-
+        namespace: $(tt.params.namespace)
+      spec:
+        params:
+          - name: revision
+            value: $(tt.params.gitrevision)
+          - name: url
+            value: $(tt.params.gitrepositoryurl)
+          - name: project-name
+            value: $(tt.params.projectname)
+          - name: repo-full-name
+            value: $(tt.params.repo-full-name)
+          - name: ref
+            value: $(tt.params.gitref)
+        pipelineRef:
+          name: tektonic-npm-pull-request
+        taskRunTemplate:
+          podTemplate:
+            securityContext:
+              fsGroup: 1024
+              runAsGroup: 1024
+              runAsNonRoot: true
+              runAsUser: 1024
+              seccompProfile:
+                type: RuntimeDefault
+          serviceAccountName: tektonic-tekton-triggers
+        workspaces:
+          - name: workspace
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+          - name: grype-cache
+            persistentVolumeClaim:
+              claimName: tektonic-grype-cache
+          - name: npm-cache
+            persistentVolumeClaim:
+              claimName: tektonic-npm-cache
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: tektonic-github-listener
+  namespace: tektonic-ci
+spec:
+  serviceAccountName: tektonic-tekton-triggers
+  triggers:
+    - bindings:
+        - kind: TriggerBinding
+          ref: tektonic-github-push
+      interceptors:
+        - params:
+            - name: eventTypes
+              value:
+                - push
+            - name: secretRef
+              value:
+                secretKey: secret
+                secretName: github-webhook-secret
+          ref:
+            kind: ClusterInterceptor
+            name: github
+      template:
+        ref: tektonic-github-push-trigger-template
+    - bindings:
+        - kind: TriggerBinding
+          ref: tektonic-github-pull-request
+      interceptors:
+        - params:
+            - name: eventTypes
+              value:
+                - pull_request
+            - name: secretRef
+              value:
+                secretKey: secret
+                secretName: github-webhook-secret
+          ref:
+            kind: ClusterInterceptor
+            name: github
+      template:
+        ref: tektonic-github-pull-request-trigger-template

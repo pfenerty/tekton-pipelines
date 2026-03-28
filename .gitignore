@@ -1,7 +1,6 @@
 node_modules/
 dist/
 synth-output/
-ci-pipeline/
 /lib/
 *.js.map
 docs/generated/
