@@ -239,13 +239,16 @@ let archive = $"${wsPath}/($hash).tar.zst"
 if ($archive | path exists) {
   let size = (ls $archive | get size.0)
   log $"hit ($hash) archive=($archive) size=($size)"
-  # Make any existing cache paths writable before extracting, in case a
-  # prior restore left read-only directories (e.g. Go module @version dirs).
+  # Remove any pre-existing cache paths so stale read-only directories
+  # (e.g. Go module @version dirs with 0555) don't block extraction.
   let cache_paths = [${c.paths.map((p) => `"${p}"`).join(", ")}]
   for p in $cache_paths {
-    if ($p | path exists) { ^chmod -R u+w $p }
+    if ($p | path exists) {
+      ^chmod -R u+w $p
+      rm -rf $p
+    }
   }
-  ^zstd -d -T1 -c $archive | ^tar xf - --no-same-permissions --no-same-owner
+  ^zstd -d -T1 -c $archive | ^tar xf - -o --no-same-permissions
   log "restored"
 } else {
   log $"miss ($hash) archive=($archive)"
@@ -312,6 +315,10 @@ let archive = $"${wsPath}/($hash).tar.zst"
 ${skipExisting}
 let paths = [${pathList}] | where { |p| ($p | path exists) }
 if ($paths | is-empty) { log "no paths to cache"; exit 0 }
+
+# Ensure all directories are writable so the archive doesn't contain
+# read-only dirs (e.g. Go module @version dirs with 0555 perms).
+for p in $paths { ^chmod -R u+w $p }
 
 # Evict old entries
 let max = ${maxEntries}
