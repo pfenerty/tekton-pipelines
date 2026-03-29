@@ -239,7 +239,13 @@ let archive = $"${wsPath}/($hash).tar.zst"
 if ($archive | path exists) {
   let size = (ls $archive | get size.0)
   log $"hit ($hash) archive=($archive) size=($size)"
-  ^zstd -d -T1 -c $archive | ^tar xf -
+  # Make any existing cache paths writable before extracting, in case a
+  # prior restore left read-only directories (e.g. Go module @version dirs).
+  let cache_paths = [${c.paths.map((p) => `"${p}"`).join(", ")}]
+  for p in $cache_paths {
+    if ($p | path exists) { ^chmod -R u+w $p }
+  }
+  ^zstd -d -T1 -c $archive | ^tar xf - --no-same-permissions --no-same-owner
   log "restored"
 } else {
   log $"miss ($hash) archive=($archive)"
