@@ -78,7 +78,7 @@ export class GitPipeline extends Pipeline {
 # The workspace dir may be owned by root (local-path provisioner) while the pod
 # runs as a non-root uid; git 2.35.2+ rejects such repos without this config.
 git config --global --add safe.directory ${workspace.path}
-git init .
+git init -b main .
 git remote add origin ${url}
 # Fetch only the target branch at depth=1. GitHub doesn't allow fetching by arbitrary
 # SHA, but the revision is always a branch tip in CI (push/PR events). Fetching a
