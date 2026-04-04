@@ -407,7 +407,7 @@ let object = $"${prefix}($hash).tar.zst"
 let gcs_url = $"gs://${bucket}/($object)"
 log $"checking ($gcs_url)"
 
-let exists = (try { ^gcloud storage stat $gcs_url | ignore; true } catch { false })
+let exists = ((^gcloud storage ls $gcs_url | complete).exit_code == 0)
 if $exists {
   let size = (
     ^gcloud storage ls -l $gcs_url
@@ -444,7 +444,7 @@ if $exists {
 
         const skipExisting = forceSave
             ? ""
-            : `let already_exists = (try { ^gcloud storage stat $gcs_url | ignore; true } catch { false })
+            : `let already_exists = ((^gcloud storage ls $gcs_url | complete).exit_code == 0)
 if $already_exists { log $"($hash) exists, skipping"; exit 0 }
 `;
 
@@ -477,7 +477,7 @@ if $max > 0 {
     | sort-by created | reverse | skip $max
   } catch { [] })
   for e in $entries {
-    try { ^gcloud storage rm $e.url | ignore }
+    ^gcloud storage rm $e.url | complete | ignore
     log $"evicted ($e.url)"
   }
 }

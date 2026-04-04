@@ -748,7 +748,7 @@ describe('Task', () => {
       expect(names[2]).toBe('save-npm-cache');
     });
 
-    it('restore script uses gcloud storage stat for existence check', () => {
+    it('restore script uses gcloud storage ls for existence check', () => {
       const app = new App();
       const chart = new Chart(app, 'test');
       const t = new Task({
@@ -758,7 +758,7 @@ describe('Task', () => {
       });
       t.synth(chart, 'ns');
       const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'restore-npm-cache');
-      expect(restore.script).toContain('gcloud storage stat');
+      expect(restore.script).toContain('gcloud storage ls $gcs_url | complete');
       expect(restore.script).not.toContain('metadata.google.internal');
       expect(restore.script).not.toContain('access_token');
     });
@@ -832,7 +832,7 @@ describe('Task', () => {
       t.synth(chart, 'ns');
       const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'save-npm-cache');
       expect(save.script).toContain('gcloud storage ls -l');
-      expect(save.script).toContain('gcloud storage rm');
+      expect(save.script).toContain('gcloud storage rm $e.url | complete | ignore');
       expect(save.script).toContain('sort-by created');
     });
 
