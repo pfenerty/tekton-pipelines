@@ -5,6 +5,7 @@ import {
     DEFAULT_STEP_SECURITY_CONTEXT,
     DEFAULT_STEP_RESOURCES,
     DEFAULT_BASE_IMAGE,
+    DEFAULT_GCS_CACHE_IMAGE,
     DEFAULT_GCS_COMPRESSION_LEVEL,
 } from "../constants";
 import { Param } from "./param";
@@ -36,8 +37,8 @@ export interface TaskStepSpec {
     onError?: "continue" | "stopAndFail";
     /** CPU/memory requests and limits for this step (overrides stepTemplate computeResources). */
     computeResources?: {
-        requests?: { cpu?: string; memory?: string };
-        limits?: { cpu?: string; memory?: string };
+        requests?: { cpu?: string; memory?: string; "ephemeral-storage"?: string };
+        limits?: { cpu?: string; memory?: string; "ephemeral-storage"?: string };
     };
     /** Per-step container securityContext override. Applied on top of the task stepTemplate. */
     securityContext?: Record<string, unknown>;
@@ -94,8 +95,8 @@ export interface TaskCacheSpec {
      * build step consumes most of the node's RAM.
      */
     computeResources?: {
-        requests?: { cpu?: string; memory?: string };
-        limits?: { cpu?: string; memory?: string };
+        requests?: { cpu?: string; memory?: string; "ephemeral-storage"?: string };
+        limits?: { cpu?: string; memory?: string; "ephemeral-storage"?: string };
     };
     /**
      * Maximum number of cache archive entries to keep per workspace. During save,
@@ -402,41 +403,26 @@ def log [msg: string] {
 ${hashExpr}
 $hash | save -f ${hashFile}
 
-let token_resp = (try {
-  http get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H [Metadata-Flavor Google]
-} catch { |e|
-  log $"ERROR: failed to fetch Workload Identity token: ($e.msg)"
-  exit 1
-})
-let token = ($token_resp | get access_token)
-let token_ttl = ($token_resp | get expires_in)
-log $"token ok, expires in ($token_ttl)s"
-
 let object = $"${prefix}($hash).tar.zst"
-let meta_url = $"https://storage.googleapis.com/storage/v1/b/${bucket}/o/($object | str replace --all '/' '%2F')"
-log $"checking gs://${bucket}/($object)"
-log $"  url: ($meta_url)"
+let gcs_url = $"gs://${bucket}/($object)"
+log $"checking ($gcs_url)"
 
-let metadata = (try {
-  http get $meta_url -H [Authorization $"Bearer ($token)"]
-} catch { |e|
-  log $"  miss: ($e.msg)"
-  null
-})
-
-if $metadata != null {
-  let archive_size = ($metadata.size | into int)
-  log $"hit ($hash) size=(($archive_size / 1_000_000) | math round --precision 1)MB"
+let exists = (try { ^gcloud storage stat $gcs_url | ignore; true } catch { false })
+if $exists {
+  let size = (
+    ^gcloud storage ls -l $gcs_url
+    | lines | first | str trim | split words | first | into int
+  )
+  log $"hit ($hash) size=(($size / 1_000_000) | math round --precision 1)MB"
   let cache_paths = [${c.paths.map((p) => `"${p}"`).join(", ")}]
   for p in $cache_paths {
     if ($p | path exists) { ^chmod -R u+w $p; rm -rf $p }
   }
   log "downloading ..."
   let t0 = (date now)
-  let dl_url = $"($meta_url)?alt=media"
-  http get $dl_url -H [Authorization $"Bearer ($token)"] --raw | ^zstd -d ${threadFlag} -c | ^tar xf - -o --no-same-permissions
+  ^gcloud storage cp $gcs_url - | ^zstd -d ${threadFlag} -c | ^tar xf - -o --no-same-permissions
   let elapsed = (((date now) - $t0) | into int) / 1_000_000_000
-  let speed = (if $elapsed > 0 { ($archive_size / 1_000_000) / $elapsed | math round --precision 1 } else { 0 })
+  let speed = (if $elapsed > 0 { ($size / 1_000_000) / $elapsed | math round --precision 1 } else { 0 })
   log $"restored in ($elapsed)s ($speed) MB/s"
 } else {
   log $"miss ($hash) — object not found in bucket"
@@ -454,11 +440,11 @@ if $metadata != null {
         const threadFlag = Task._threadFlag(c);
         const label = `save-${c.name}-cache`;
         const pathList = c.paths.map((p) => `"${p}"`).join(", ");
+        const tmpDir = c.workingDir ?? "/tmp";
 
         const skipExisting = forceSave
             ? ""
-            : `let meta_url = $"https://storage.googleapis.com/storage/v1/b/${bucket}/o/($object | str replace --all '/' '%2F')"
-let already_exists = (try { http get $meta_url -H [Authorization $"Bearer ($token)"]; true } catch { false })
+            : `let already_exists = (try { ^gcloud storage stat $gcs_url | ignore; true } catch { false })
 if $already_exists { log $"($hash) exists, skipping"; exit 0 }
 `;
 
@@ -470,14 +456,8 @@ def log [msg: string] {
 let hash = (try { open --raw ${hashFile} | str trim } catch { "" })
 if ($hash | is-empty) { log "no hash, skipping"; exit 0 }
 
-let token = (try {
-  http get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H [Metadata-Flavor Google] | get access_token
-} catch { |e|
-  log $"ERROR: failed to fetch Workload Identity token: ($e.msg)"
-  exit 1
-})
-
 let object = $"${prefix}($hash).tar.zst"
+let gcs_url = $"gs://${bucket}/($object)"
 ${skipExisting}
 let paths = [${pathList}] | where { |p| ($p | path exists) }
 if ($paths | is-empty) { log "no paths to cache"; exit 0 }
@@ -486,23 +466,25 @@ for p in $paths { ^chmod -R u+w $p }
 
 let max = ${maxEntries}
 if $max > 0 {
-  let list_url = $"https://storage.googleapis.com/storage/v1/b/${bucket}/o?prefix=($"${prefix}" | str replace --all '/' '%2F')"
   let entries = (try {
-    http get $list_url -H [Authorization $"Bearer ($token)"]
-    | get items? | default []
-    | where { |e| ($e.name | str ends-with ".tar.zst") }
-    | sort-by timeCreated | reverse | skip $max
+    ^gcloud storage ls -l $"gs://${bucket}/${prefix}*.tar.zst"
+    | lines
+    | where { |l| $l | str ends-with ".tar.zst" }
+    | each { |l|
+        let parts = ($l | str trim | split row -r '\\s+')
+        { url: ($parts | last), created: ($parts | get 1) }
+      }
+    | sort-by created | reverse | skip $max
   } catch { [] })
   for e in $entries {
-    let del_url = $"https://storage.googleapis.com/storage/v1/b/${bucket}/o/($e.name | str replace --all '/' '%2F')"
-    try { http delete $del_url -H [Authorization $"Bearer ($token)"] }
-    log $"evicted ($e.name)"
+    try { ^gcloud storage rm $e.url | ignore }
+    log $"evicted ($e.url)"
   }
 }
 
 let uncompressed = ($paths | each { |p| try { du $p | get apparent.0 | into int } catch { 0 } } | math sum)
 log $"compressing (($uncompressed / 1_000_000) | math round --precision 1)MB ..."
-let tmp = $"/tmp/cache-($hash).tar.zst"
+let tmp = $"${tmpDir}/cache-($hash).tar.zst"
 let t0 = (date now)
 ^tar cf - ...$paths | ^zstd -${compressionLevel} ${threadFlag}${forceSave ? " -f" : ""} -o $tmp
 let compress_elapsed = (((date now) - $t0) | into int) / 1_000_000_000
@@ -511,13 +493,12 @@ let ratio = (if $compressed > 0 { $uncompressed / $compressed | math round --pre
 log $"compressed to (($compressed / 1_000_000) | math round --precision 1)MB ratio=($ratio)x in ($compress_elapsed)s"
 
 log "uploading ..."
-let upload_url = $"https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=($object | str replace --all '/' '%2F')"
 let t1 = (date now)
-open --raw $tmp | http post $upload_url -H [Authorization $"Bearer ($token)"] -t "application/octet-stream"
+^gcloud storage cp $tmp $gcs_url
+rm $tmp
 let upload_elapsed = (((date now) - $t1) | into int) / 1_000_000_000
 let speed = (if $upload_elapsed > 0 { ($compressed / 1_000_000) / $upload_elapsed | math round --precision 1 } else { 0 })
-rm $tmp
-log $"uploaded gs://${bucket}/($object) in ($upload_elapsed)s ($speed) MB/s"`;
+log $"uploaded ($gcs_url) in ($upload_elapsed)s ($speed) MB/s"`;
     }
 
     // ── Step builders (dispatch by backend) ────────────────────────
@@ -532,7 +513,7 @@ log $"uploaded gs://${bucket}/($object) in ($upload_elapsed)s ($speed) MB/s"`;
                 : Task._makePvcRestoreScript(c, taskName);
         return {
             name: `restore-${c.name}-cache`,
-            image: c.image ?? DEFAULT_BASE_IMAGE,
+            image: c.image ?? (c.backend?.type === "gcs" ? DEFAULT_GCS_CACHE_IMAGE : DEFAULT_BASE_IMAGE),
             script,
             ...(c.workingDir ? { workingDir: c.workingDir } : {}),
             ...(c.computeResources
@@ -551,7 +532,7 @@ log $"uploaded gs://${bucket}/($object) in ($upload_elapsed)s ($speed) MB/s"`;
                 : Task._makePvcSaveScript(c, taskName);
         return {
             name: `save-${c.name}-cache`,
-            image: c.image ?? DEFAULT_BASE_IMAGE,
+            image: c.image ?? (c.backend?.type === "gcs" ? DEFAULT_GCS_CACHE_IMAGE : DEFAULT_BASE_IMAGE),
             script,
             onError: "continue" as const,
             ...(c.workingDir ? { workingDir: c.workingDir } : {}),

@@ -3,7 +3,7 @@ import { App, Chart } from 'cdk8s';
 import { Task } from './task';
 import { Param } from './param';
 import { Workspace } from './workspace';
-import { RESTRICTED_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES, DEFAULT_BASE_IMAGE } from '../constants';
+import { RESTRICTED_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES, DEFAULT_BASE_IMAGE, DEFAULT_GCS_CACHE_IMAGE } from '../constants';
 import { GitHubStatusReporter } from '../reporters/github-status-reporter';
 
 describe('Task', () => {
@@ -748,7 +748,7 @@ describe('Task', () => {
       expect(names[2]).toBe('save-npm-cache');
     });
 
-    it('restore script fetches token from metadata server', () => {
+    it('restore script uses gcloud storage stat for existence check', () => {
       const app = new App();
       const chart = new Chart(app, 'test');
       const t = new Task({
@@ -758,22 +758,9 @@ describe('Task', () => {
       });
       t.synth(chart, 'ns');
       const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'restore-npm-cache');
-      expect(restore.script).toContain('metadata.google.internal');
-      expect(restore.script).toContain('access_token');
-    });
-
-    it('restore script uses GET (not HEAD) for existence check', () => {
-      const app = new App();
-      const chart = new Chart(app, 'test');
-      const t = new Task({
-        name: 'gcs-task',
-        steps: [{ name: 's', image: 'alpine' }],
-        caches: [gcsCacheSpec],
-      });
-      t.synth(chart, 'ns');
-      const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'restore-npm-cache');
-      expect(restore.script).toContain('http get $meta_url');
-      expect(restore.script).not.toContain('http head');
+      expect(restore.script).toContain('gcloud storage stat');
+      expect(restore.script).not.toContain('metadata.google.internal');
+      expect(restore.script).not.toContain('access_token');
     });
 
     it('restore script checks GCS object and uses prefix', () => {
@@ -786,7 +773,7 @@ describe('Task', () => {
       });
       t.synth(chart, 'ns');
       const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'restore-npm-cache');
-      expect(restore.script).toContain('storage.googleapis.com');
+      expect(restore.script).toContain('gcloud storage');
       expect(restore.script).toContain('my-ci-cache');
       expect(restore.script).toContain('tekton/');
     });
@@ -815,8 +802,7 @@ describe('Task', () => {
       });
       t.synth(chart, 'ns');
       const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'save-npm-cache');
-      expect(save.script).toContain('upload/storage/v1');
-      expect(save.script).toContain('uploadType=media');
+      expect(save.script).toContain('gcloud storage cp');
       expect(save.script).toContain('my-ci-cache');
     });
 
@@ -832,10 +818,10 @@ describe('Task', () => {
       const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'save-npm-cache');
       expect(save.script).toContain('ratio=');
       expect(save.script).toContain('MB/s');
-      expect(save.script).toContain('uploaded gs://');
+      expect(save.script).toContain('uploaded ($gcs_url)');
     });
 
-    it('save script evicts old entries via GCS API', () => {
+    it('save script evicts old entries via gcloud storage', () => {
       const app = new App();
       const chart = new Chart(app, 'test');
       const t = new Task({
@@ -845,8 +831,9 @@ describe('Task', () => {
       });
       t.synth(chart, 'ns');
       const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'save-npm-cache');
-      expect(save.script).toContain('sort-by timeCreated');
-      expect(save.script).toContain('http delete');
+      expect(save.script).toContain('gcloud storage ls -l');
+      expect(save.script).toContain('gcloud storage rm');
+      expect(save.script).toContain('sort-by created');
     });
 
     it('uses default GCS compression level (3)', () => {
@@ -940,6 +927,34 @@ describe('Task', () => {
       expect(finallyTasks).toHaveLength(1);
       expect(finallyTasks[0].name).toBe('save-npm-cache-gcs-task');
       expect(finallyTasks[0].workspaces.map(w => w.name)).toEqual(['workspace']);
+    });
+
+    it('uses DEFAULT_GCS_CACHE_IMAGE for GCS cache steps', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({
+        name: 'gcs-task',
+        steps: [{ name: 's', image: 'alpine' }],
+        caches: [gcsCacheSpec],
+      });
+      t.synth(chart, 'ns');
+      const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'restore-npm-cache');
+      const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'save-npm-cache');
+      expect(restore.image).toBe(DEFAULT_GCS_CACHE_IMAGE);
+      expect(save.image).toBe(DEFAULT_GCS_CACHE_IMAGE);
+    });
+
+    it('respects custom image override for GCS steps', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({
+        name: 'gcs-task',
+        steps: [{ name: 's', image: 'alpine' }],
+        caches: [{ ...gcsCacheSpec, image: 'my-custom-image:latest' }],
+      });
+      t.synth(chart, 'ns');
+      const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'restore-npm-cache');
+      expect(restore.image).toBe('my-custom-image:latest');
     });
 
     it('empty key produces static hash', () => {
