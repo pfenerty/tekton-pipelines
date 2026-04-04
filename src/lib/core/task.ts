@@ -515,6 +515,9 @@ log $"uploaded ($gcs_url) in ($upload_elapsed)s ($speed) MB/s"`;
             name: `restore-${c.name}-cache`,
             image: c.image ?? (c.backend?.type === "gcs" ? DEFAULT_GCS_CACHE_IMAGE : DEFAULT_BASE_IMAGE),
             script,
+            ...(c.backend?.type === "gcs"
+                ? { env: [{ name: "CLOUDSDK_CONFIG", value: "/tekton/home/.config/gcloud" }] }
+                : {}),
             ...(c.workingDir ? { workingDir: c.workingDir } : {}),
             ...(c.computeResources
                 ? { computeResources: c.computeResources }
@@ -535,6 +538,9 @@ log $"uploaded ($gcs_url) in ($upload_elapsed)s ($speed) MB/s"`;
             image: c.image ?? (c.backend?.type === "gcs" ? DEFAULT_GCS_CACHE_IMAGE : DEFAULT_BASE_IMAGE),
             script,
             onError: "continue" as const,
+            ...(c.backend?.type === "gcs"
+                ? { env: [{ name: "CLOUDSDK_CONFIG", value: "/tekton/home/.config/gcloud" }] }
+                : {}),
             ...(c.workingDir ? { workingDir: c.workingDir } : {}),
             ...(c.computeResources
                 ? { computeResources: c.computeResources }
