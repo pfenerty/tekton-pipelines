@@ -494,7 +494,7 @@ log $"compressed to (($compressed / 1_000_000) | math round --precision 1)MB rat
 
 log "uploading ..."
 let t1 = (date now)
-^gcloud storage cp --no-parallel-composite-upload $tmp $gcs_url
+^gcloud storage cp $tmp $gcs_url
 rm $tmp
 let upload_elapsed = (((date now) - $t1) | into int) / 1_000_000_000
 let speed = (if $upload_elapsed > 0 { ($compressed / 1_000_000) / $upload_elapsed | math round --precision 1 } else { 0 })
