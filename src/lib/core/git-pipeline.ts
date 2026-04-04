@@ -80,10 +80,11 @@ export class GitPipeline extends Pipeline {
 git config --global --add safe.directory ${workspace.path}
 git init .
 git remote add origin ${url}
-# Fetch all branch tips (depth=1) — GitHub doesn't allow fetching by arbitrary SHA.
-# The revision is always a branch tip in CI (push/PR events), so it will be present.
-git fetch --depth=1 origin '+refs/heads/*:refs/remotes/origin/*'
-git -c advice.detachedHead=false checkout ${revision}
+# Fetch only the target branch at depth=1. GitHub doesn't allow fetching by arbitrary
+# SHA, but the revision is always a branch tip in CI (push/PR events). Fetching a
+# single branch avoids wildcard-refspec pack issues in newer git versions.
+git fetch --depth=1 origin ${revision}
+git checkout -b ${revision} FETCH_HEAD
 
 # Capture git metadata for downstream tasks
 let sha = (git rev-parse HEAD | str trim)
