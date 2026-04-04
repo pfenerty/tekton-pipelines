@@ -968,6 +968,87 @@ describe('Task', () => {
       expect(restore.workingDir).toBe('$(workspaces.workspace.path)');
     });
 
+    it('restore script handles subdirectory paths in cache_paths', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const subdirSpec = {
+        name: 'go',
+        key: ['api/go.sum'],
+        paths: ['api/vendor'],
+        compress: true,
+        backend: { type: 'gcs' as const, bucket: 'my-ci-cache' },
+        workingDir: '$(workspaces.workspace.path)',
+      };
+      const t = new Task({
+        name: 'gcs-task',
+        steps: [{ name: 's', image: 'alpine' }],
+        caches: [subdirSpec],
+      });
+      t.synth(chart, 'ns');
+      const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'restore-go-cache');
+      expect(restore.script).toContain('"api/vendor"');
+      expect(restore.script).toContain('"api/go.sum"');
+      expect(restore.script).toContain('rm -rf $p');
+    });
+
+    it('save script handles subdirectory paths', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const subdirSpec = {
+        name: 'go',
+        key: ['api/go.sum'],
+        paths: ['api/vendor'],
+        compress: true,
+        backend: { type: 'gcs' as const, bucket: 'my-ci-cache' },
+        workingDir: '$(workspaces.workspace.path)',
+      };
+      const t = new Task({
+        name: 'gcs-task',
+        steps: [{ name: 's', image: 'alpine' }],
+        caches: [subdirSpec],
+      });
+      t.synth(chart, 'ns');
+      const save = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'save-go-cache');
+      expect(save.script).toContain('"api/vendor"');
+      expect(save.script).toContain('tar cf - ...$paths');
+    });
+
+    it('supports multiple caches for different subdirectory projects', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const goCache = {
+        name: 'go',
+        key: ['api/go.sum'],
+        paths: ['api/vendor'],
+        compress: true,
+        backend: { type: 'gcs' as const, bucket: 'my-ci-cache' },
+        workingDir: '$(workspaces.workspace.path)',
+      };
+      const npmCache = {
+        name: 'npm',
+        key: ['web/package-lock.json'],
+        paths: ['web/node_modules'],
+        compress: true,
+        backend: { type: 'gcs' as const, bucket: 'my-ci-cache' },
+        workingDir: '$(workspaces.workspace.path)',
+      };
+      const t = new Task({
+        name: 'gcs-task',
+        steps: [{ name: 's', image: 'alpine' }],
+        caches: [goCache, npmCache],
+      });
+      t.synth(chart, 'ns');
+      const steps = chart.toJson()[0].spec.steps;
+      const goRestore = steps.find((s: any) => s.name === 'restore-go-cache');
+      const npmRestore = steps.find((s: any) => s.name === 'restore-npm-cache');
+      expect(goRestore).toBeDefined();
+      expect(npmRestore).toBeDefined();
+      expect(goRestore.script).toContain('api/go.sum');
+      expect(goRestore.script).toContain('"api/vendor"');
+      expect(npmRestore.script).toContain('web/package-lock.json');
+      expect(npmRestore.script).toContain('"web/node_modules"');
+    });
+
     it('propagates computeResources to cache steps', () => {
       const app = new App();
       const chart = new Chart(app, 'test');
