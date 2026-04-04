@@ -13,10 +13,6 @@ flox activate -- npm run synth
 The environment is defined in `.flox/env/manifest.toml` and currently provides:
 - Node.js 24.13.0 (npm bundled)
 
-## Issue Tracking
-
-Beads (`bd`) is configured for this project at `.beads/`. Use it for all task tracking — create an issue before starting work, mark in-progress when starting, close when done.
-
 ## Common Commands
 
 | Action | Command |
@@ -26,3 +22,32 @@ Beads (`bd`) is configured for this project at `.beads/`. Use it for all task tr
 | Synthesize manifests | `flox activate -- npm run synth` |
 | Install dependencies | `flox activate -- npm install` |
 | Watch mode tests | `flox activate -- npm run test:watch` |
+
+## Issue Tracking
+
+Beads (`bd`) is configured at `.beads/`. Use it for ALL task tracking — no markdown TODOs.
+
+```bash
+bd ready                              # find available work
+bd create --title="..." --type=task   # create before starting work
+bd update <id> --status=in_progress   # claim it
+bd close <id>                         # mark done
+```
+
+Issue types: `bug`, `feature`, `task`, `epic`, `chore`
+Priorities: `0`=critical, `1`=high, `2`=medium (default), `3`=low, `4`=backlog
+
+## Session Completion
+
+Work is NOT complete until pushed. Before ending a session:
+
+1. Close finished issues, file issues for remaining work
+2. Run quality gates if code changed (`flox activate -- npm test && npm run build`)
+3. Push:
+   ```bash
+   git pull --rebase && git push
+   ```
+
+## Using Tektonic
+
+See [`docs/agent-guide.md`](docs/agent-guide.md) for a full guide on creating pipelines with this library.

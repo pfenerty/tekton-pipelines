@@ -58,9 +58,7 @@ new TektonProject({
 
 ## Documentation
 
-- [Getting started](docs/getting-started.md) — step-by-step tutorial
-- [API reference](docs/api.md) — all classes, interfaces, and constants
-- [Triggers guide](docs/triggers.md) — GitHub webhook setup and configuration
+- [Agent guide](docs/agent-guide.md) — full API reference with examples
 
 ## Requirements
 
