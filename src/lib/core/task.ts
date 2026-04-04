@@ -420,7 +420,7 @@ if $exists {
   }
   log "downloading ..."
   let t0 = (date now)
-  ^gcloud storage cp $gcs_url - err>/dev/null | ^zstd -d ${threadFlag} -c | ^tar xf - -o --no-same-permissions
+  ^gcloud --verbosity=error storage cp $gcs_url - | ^zstd -d ${threadFlag} -c | ^tar xf - -o --no-same-permissions
   let elapsed = (((date now) - $t0) | into int) / 1_000_000_000
   let speed = (if $elapsed > 0 { ($size / 1_000_000) / $elapsed | math round --precision 1 } else { 0 })
   log $"restored in ($elapsed)s ($speed) MB/s"
