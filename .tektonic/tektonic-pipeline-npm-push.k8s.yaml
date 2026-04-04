@@ -4,16 +4,6 @@ metadata:
   name: tektonic-npm-push
   namespace: tektonic-ci
 spec:
-  finally:
-    - name: cache-save-npm-cache-test-npm
-      taskRef:
-        kind: Task
-        name: tektonic-cache-save-npm-cache-test-npm
-      workspaces:
-        - name: npm-cache
-          workspace: npm-cache
-        - name: workspace
-          workspace: workspace
   params:
     - name: project-name
       type: string
@@ -61,8 +51,6 @@ spec:
         kind: Task
         name: tektonic-test-npm
       workspaces:
-        - name: npm-cache
-          workspace: npm-cache
         - name: workspace
           workspace: workspace
     - name: anchore-scan
@@ -79,11 +67,7 @@ spec:
         kind: Task
         name: tektonic-anchore-scan
       workspaces:
-        - name: grype-cache
-          workspace: grype-cache
         - name: workspace
           workspace: workspace
   workspaces:
     - name: workspace
-    - name: npm-cache
-    - name: grype-cache

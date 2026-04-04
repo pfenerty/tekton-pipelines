@@ -5,6 +5,7 @@ export { Workspace } from "./lib/core/workspace";
 export type { WorkspaceOptions } from "./lib/core/workspace";
 export { Task } from "./lib/core/task";
 export type { TaskOptions, TaskStepSpec, TaskCacheSpec } from "./lib/core/task";
+export type { CacheBackend, GcsCacheBackend } from "./lib/core/cache-backend";
 export { Pipeline } from "./lib/core/pipeline";
 export type { PipelineOptions } from "./lib/core/pipeline";
 export { GitPipeline } from "./lib/core/git-pipeline";
@@ -38,15 +39,6 @@ export type { GitHubTagTriggerProps } from "./lib/triggers/github-tag.trigger";
 export { TektonInfraChart } from "./charts/tekton-infra.chart";
 export type { TektonInfraChartProps } from "./charts/tekton-infra.chart";
 
-// Cache presets
-export {
-    goModuleCache,
-    npmCache,
-    mavenCache,
-    gradleCache,
-} from "./lib/presets/cache-presets";
-export type { CachePresetOptions } from "./lib/presets/cache-presets";
-
 // Constants
 export {
     TEKTON_API_V1,
@@ -59,4 +51,5 @@ export {
     DEFAULT_BASE_IMAGE,
     DEFAULT_SERVICE_ACCOUNT,
     DEFAULT_WORKSPACE_STORAGE,
+    DEFAULT_GCS_COMPRESSION_LEVEL,
 } from "./lib/constants";

@@ -5,7 +5,6 @@ resources:
   - tektonic-pipeline-npm-push.k8s.yaml
   - tektonic-task-anchore-scan.k8s.yaml
   - tektonic-task-build-npm.k8s.yaml
-  - tektonic-task-cache-save-npm-cache-test-npm.k8s.yaml
   - tektonic-task-git-clone.k8s.yaml
   - tektonic-task-set-status-pending.k8s.yaml
   - tektonic-task-test-npm.k8s.yaml

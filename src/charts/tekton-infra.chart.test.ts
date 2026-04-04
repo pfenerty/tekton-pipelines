@@ -94,6 +94,31 @@ describe('TektonInfraChart', () => {
     });
   });
 
+  describe('service account annotations', () => {
+    it('omits annotations when not provided', () => {
+      const app = new App();
+      new TektonInfraChart(app, 'infra', baseProps);
+      const manifests = app.charts.flatMap(c => c.toJson());
+      const sa = manifests.find((m: any) => m.kind === 'ServiceAccount');
+      expect(sa.metadata.annotations).toBeUndefined();
+    });
+
+    it('applies annotations to the service account', () => {
+      const app = new App();
+      new TektonInfraChart(app, 'infra', {
+        ...baseProps,
+        serviceAccountAnnotations: {
+          'iam.gke.io/gcp-service-account': 'sa@project.iam.gserviceaccount.com',
+        },
+      });
+      const manifests = app.charts.flatMap(c => c.toJson());
+      const sa = manifests.find((m: any) => m.kind === 'ServiceAccount');
+      expect(sa.metadata.annotations).toEqual({
+        'iam.gke.io/gcp-service-account': 'sa@project.iam.gserviceaccount.com',
+      });
+    });
+  });
+
   describe('pod security context', () => {
     // PipelineRuns live inside TriggerTemplate.spec.resourcetemplates, not as top-level resources
     const getPipelineRuns = (app: App) =>

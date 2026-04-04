@@ -25,11 +25,11 @@ spec:
     workingDir: $(workspaces.workspace.path)
   steps:
     - image: ghcr.io/pfenerty/apko-cicd/base:stable
-      name: cache-restore-npm-cache
+      name: restore-npm-cache
       script: |-
         #!/usr/bin/env nu
         def log [msg: string] {
-          print $"[(date now | format date '%H:%M:%S')] cache-restore-npm-cache: ($msg)"
+          print $"[(date now | format date '%H:%M:%S')] restore-npm-cache: ($msg)"
         }
 
         let hash = (
@@ -37,22 +37,49 @@ spec:
           | each { |f| if ($f | path exists) { open --raw $f } else { "" } }
           | str join | hash sha256 | str substring 0..15
         )
-        $hash | save -f /tekton/home/.cache-npm-cache-hash
-        let archive = $"$(workspaces.npm-cache.path)/($hash).tar.zst"
+        $hash | save -f /tekton/home/.cache-npm-hash
 
-        if ($archive | path exists) {
-          let size = (ls $archive | get size.0)
-          log $"hit ($hash) archive=($archive) size=($size)"
-          ^zstd -d -T1 -c $archive | ^tar xf -
-          log "restored"
+        let token_resp = (try {
+          http get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H [Metadata-Flavor Google]
+        } catch { |e|
+          log $"ERROR: failed to fetch Workload Identity token: ($e.msg)"
+          exit 1
+        })
+        let token = ($token_resp | get access_token)
+        let token_ttl = ($token_resp | get expires_in)
+        log $"token ok, expires in ($token_ttl)s"
+
+        let object = $"npm/($hash).tar.zst"
+        let meta_url = $"https://storage.googleapis.com/storage/v1/b/tektonic-ci-cache/o/($object | str replace --all '/' '%2F')"
+        log $"checking gs://tektonic-ci-cache/($object)"
+        log $"  url: ($meta_url)"
+
+        let metadata = (try {
+          http get $meta_url -H [Authorization $"Bearer ($token)"]
+        } catch { |e|
+          log $"  miss: ($e.msg)"
+          null
+        })
+
+        if $metadata != null {
+          let archive_size = ($metadata.size | into int)
+          log $"hit ($hash) size=(($archive_size / 1_000_000) | math round --precision 1)MB"
+          let cache_paths = ["node_modules"]
+          for p in $cache_paths {
+            if ($p | path exists) { ^chmod -R u+w $p; rm -rf $p }
+          }
+          log "downloading ..."
+          let t0 = (date now)
+          let dl_url = $"($meta_url)?alt=media"
+          http get $dl_url -H [Authorization $"Bearer ($token)"] --raw | ^zstd -d -T0 -c | ^tar xf - -o --no-same-permissions
+          let elapsed = (((date now) - $t0) | into int) / 1_000_000_000
+          let speed = (if $elapsed > 0 { ($archive_size / 1_000_000) / $elapsed | math round --precision 1 } else { 0 })
+          log $"restored in ($elapsed)s ($speed) MB/s"
         } else {
-          log $"miss ($hash) archive=($archive)"
+          log $"miss ($hash) — object not found in bucket"
         }
       workingDir: $(workspaces.workspace.path)
-    - env:
-        - name: npm_config_cache
-          value: $(workspaces.npm-cache.path)
-      image: ghcr.io/pfenerty/apko-cicd/nodejs:22
+    - image: ghcr.io/pfenerty/apko-cicd/nodejs:22
       name: build
       onError: continue
       script: |-
@@ -61,35 +88,68 @@ spec:
         npm run build; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC
       workingDir: $(workspaces.workspace.path)
     - image: ghcr.io/pfenerty/apko-cicd/base:stable
-      name: cache-save-npm-cache
+      name: save-npm-cache
       onError: continue
       script: |-
         #!/usr/bin/env nu
         def log [msg: string] {
-          print $"[(date now | format date '%H:%M:%S')] cache-save-npm-cache: ($msg)"
+          print $"[(date now | format date '%H:%M:%S')] save-npm-cache: ($msg)"
         }
 
-        let hash = (try { open --raw /tekton/home/.cache-npm-cache-hash | str trim } catch { "" })
+        let hash = (try { open --raw /tekton/home/.cache-npm-hash | str trim } catch { "" })
         if ($hash | is-empty) { log "no hash, skipping"; exit 0 }
 
-        let archive = $"$(workspaces.npm-cache.path)/($hash).tar.zst"
-        if ($archive | path exists) { log $"($hash) exists, skipping"; exit 0 }
+        let token = (try {
+          http get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H [Metadata-Flavor Google] | get access_token
+        } catch { |e|
+          log $"ERROR: failed to fetch Workload Identity token: ($e.msg)"
+          exit 1
+        })
+
+        let object = $"npm/($hash).tar.zst"
+        let meta_url = $"https://storage.googleapis.com/storage/v1/b/tektonic-ci-cache/o/($object | str replace --all '/' '%2F')"
+        let already_exists = (try { http get $meta_url -H [Authorization $"Bearer ($token)"]; true } catch { false })
+        if $already_exists { log $"($hash) exists, skipping"; exit 0 }
 
         let paths = ["node_modules"] | where { |p| ($p | path exists) }
         if ($paths | is-empty) { log "no paths to cache"; exit 0 }
 
-        # Evict old entries
+        for p in $paths { ^chmod -R u+w $p }
+
         let max = 3
         if $max > 0 {
-          let entries = (try { ls $(workspaces.npm-cache.path)/*.tar.zst | sort-by modified | reverse | skip $max } catch { [] })
-          for e in $entries { log $"evicting ($e.name | path basename)"; rm $e.name }
+          let list_url = $"https://storage.googleapis.com/storage/v1/b/tektonic-ci-cache/o?prefix=($"npm/" | str replace --all '/' '%2F')"
+          let entries = (try {
+            http get $list_url -H [Authorization $"Bearer ($token)"]
+            | get items? | default []
+            | where { |e| ($e.name | str ends-with ".tar.zst") }
+            | sort-by timeCreated | reverse | skip $max
+          } catch { [] })
+          for e in $entries {
+            let del_url = $"https://storage.googleapis.com/storage/v1/b/tektonic-ci-cache/o/($e.name | str replace --all '/' '%2F')"
+            try { http delete $del_url -H [Authorization $"Bearer ($token)"] }
+            log $"evicted ($e.name)"
+          }
         }
 
-        log $"saving ($hash) ..."
-        ^tar cf - ...$paths | ^zstd -1 -T1 -o $archive
+        let uncompressed = ($paths | each { |p| try { du $p | get apparent.0 | into int } catch { 0 } } | math sum)
+        log $"compressing (($uncompressed / 1_000_000) | math round --precision 1)MB ..."
+        let tmp = $"/tmp/cache-($hash).tar.zst"
+        let t0 = (date now)
+        ^tar cf - ...$paths | ^zstd -3 -T0 -o $tmp
+        let compress_elapsed = (((date now) - $t0) | into int) / 1_000_000_000
+        let compressed = (ls $tmp | get size.0 | into int)
+        let ratio = (if $compressed > 0 { $uncompressed / $compressed | math round --precision 1 } else { 0 })
+        log $"compressed to (($compressed / 1_000_000) | math round --precision 1)MB ratio=($ratio)x in ($compress_elapsed)s"
 
-        let size = (ls $archive | get size.0)
-        log $"saved archive=($archive) size=($size)"
+        log "uploading ..."
+        let upload_url = $"https://storage.googleapis.com/upload/storage/v1/b/tektonic-ci-cache/o?uploadType=media&name=($object | str replace --all '/' '%2F')"
+        let t1 = (date now)
+        open --raw $tmp | http post $upload_url -H [Authorization $"Bearer ($token)"] -t "application/octet-stream"
+        let upload_elapsed = (((date now) - $t1) | into int) / 1_000_000_000
+        let speed = (if $upload_elapsed > 0 { ($compressed / 1_000_000) / $upload_elapsed | math round --precision 1 } else { 0 })
+        rm $tmp
+        log $"uploaded gs://tektonic-ci-cache/($object) in ($upload_elapsed)s ($speed) MB/s"
       workingDir: $(workspaces.workspace.path)
     - env:
         - name: GITHUB_TOKEN
@@ -127,5 +187,4 @@ spec:
           log $"error: ($e.msg)"
         }
   workspaces:
-    - name: npm-cache
     - name: workspace

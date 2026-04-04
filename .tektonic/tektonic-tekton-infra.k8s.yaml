@@ -1,6 +1,8 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
+  annotations:
+    iam.gke.io/gcp-service-account: tekton-ci-cache@default-350219.iam.gserviceaccount.com
   name: tektonic-tekton-triggers
   namespace: tektonic-ci
 ---
@@ -30,30 +32,6 @@ subjects:
   - kind: ServiceAccount
     name: tektonic-tekton-triggers
     namespace: tektonic-ci
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: tektonic-grype-cache
-  namespace: tektonic-ci
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 2Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: tektonic-npm-cache
-  namespace: tektonic-ci
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 2Gi
 ---
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerBinding
@@ -117,10 +95,10 @@ spec:
         taskRunTemplate:
           podTemplate:
             securityContext:
-              fsGroup: 1024
-              runAsGroup: 1024
+              fsGroup: 1001
+              runAsGroup: 1001
               runAsNonRoot: true
-              runAsUser: 1024
+              runAsUser: 1001
               seccompProfile:
                 type: RuntimeDefault
           serviceAccountName: tektonic-tekton-triggers
@@ -132,13 +110,7 @@ spec:
                   - ReadWriteOnce
                 resources:
                   requests:
-                    storage: 1Gi
-          - name: grype-cache
-            persistentVolumeClaim:
-              claimName: tektonic-grype-cache
-          - name: npm-cache
-            persistentVolumeClaim:
-              claimName: tektonic-npm-cache
+                    storage: 3Gi
 ---
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerBinding
@@ -202,10 +174,10 @@ spec:
         taskRunTemplate:
           podTemplate:
             securityContext:
-              fsGroup: 1024
-              runAsGroup: 1024
+              fsGroup: 1001
+              runAsGroup: 1001
               runAsNonRoot: true
-              runAsUser: 1024
+              runAsUser: 1001
               seccompProfile:
                 type: RuntimeDefault
           serviceAccountName: tektonic-tekton-triggers
@@ -217,13 +189,7 @@ spec:
                   - ReadWriteOnce
                 resources:
                   requests:
-                    storage: 1Gi
-          - name: grype-cache
-            persistentVolumeClaim:
-              claimName: tektonic-grype-cache
-          - name: npm-cache
-            persistentVolumeClaim:
-              claimName: tektonic-npm-cache
+                    storage: 3Gi
 ---
 apiVersion: triggers.tekton.dev/v1beta1
 kind: EventListener

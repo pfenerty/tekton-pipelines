@@ -5,10 +5,12 @@ import {
     DEFAULT_STEP_SECURITY_CONTEXT,
     DEFAULT_STEP_RESOURCES,
     DEFAULT_BASE_IMAGE,
+    DEFAULT_GCS_COMPRESSION_LEVEL,
 } from "../constants";
 import { Param } from "./param";
 import { Workspace } from "./workspace";
 import type { StatusReporter } from "./status-reporter";
+import type { CacheBackend, GcsCacheBackend } from "./cache-backend";
 
 /** Specification for a single step within a Tekton Task. */
 export interface TaskStepSpec {
@@ -48,6 +50,12 @@ export interface TaskStepSpec {
  */
 export interface TaskCacheSpec {
     /**
+     * Human-readable name for this cache, used in step names and log output.
+     * For example, `"npm"` produces steps named `restore-npm-cache` and `save-npm-cache`.
+     * Required.
+     */
+    name: string;
+    /**
      * Files (relative to workingDir) whose combined content determines the cache key.
      * An empty array produces a fixed hash, meaning the cache always hits after the
      * first run — useful for tool-managed caches like vulnerability databases.
@@ -55,8 +63,11 @@ export interface TaskCacheSpec {
     key: string[];
     /** Paths (relative to workingDir) to restore on hit and save on miss. */
     paths: string[];
-    /** Workspace (PVC) where cache entries are stored. Auto-added to task workspaces if absent. */
-    workspace: Workspace;
+    /**
+     * Workspace (PVC) where cache entries are stored. Auto-added to task workspaces if absent.
+     * Required for PVC backends. Ignored when `backend` is set to GCS.
+     */
+    workspace?: Workspace;
     /** Image for the injected restore/save steps. Defaults to `'alpine'`. */
     image?: string;
     /**
@@ -111,6 +122,23 @@ export interface TaskCacheSpec {
      * Defaults to `false`.
      */
     forceSave?: boolean;
+    /**
+     * Cache storage backend. Defaults to PVC-based caching (using the
+     * `workspace` property) when omitted.
+     *
+     * Set to `{ type: 'gcs', bucket: '...' }` to store cache archives in
+     * Google Cloud Storage instead of a PVC. Requires GKE Workload Identity.
+     */
+    backend?: CacheBackend;
+    /**
+     * Use multi-threaded zstd compression (`-T0`, auto-detect threads) instead
+     * of single-threaded (`-T1`). Faster on nodes with spare CPU but uses more
+     * memory. Only applies when `compress` is `true`.
+     *
+     * Defaults to `false` for PVC backends (constrained environments) and
+     * `true` for GCS backends (robust environments).
+     */
+    multiThreadCompression?: boolean;
 }
 
 /** Options for constructing a {@link Task}. */
@@ -186,50 +214,62 @@ export class Task {
         this.statusContext = opts.statusContext ?? opts.name;
         this.statusReporter = opts.statusReporter;
         this.caches = opts.caches ?? [];
-        // Auto-register each cache's workspace if not already present
+        // Auto-register each PVC cache's workspace if not already present.
+        // GCS caches don't use a workspace for storage.
         for (const c of this.caches) {
-            if (!this.workspaces.some((w) => w.name === c.workspace.name)) {
+            if (c.backend?.type === "gcs" || !c.workspace) continue;
+            if (!this.workspaces.some((w) => w.name === c.workspace!.name)) {
                 (this.workspaces as Workspace[]).push(c.workspace);
             }
         }
     }
 
-    /** Returns the hash-file path for the given cache spec. */
-    private static _hashFilePath(c: TaskCacheSpec, taskName?: string): string {
-        const wsPath = `$(workspaces.${c.workspace.name}.path)`;
-        if (c.saveStrategy === "finally") {
-            // Write to the cache PVC so it survives across pods.
-            return `${wsPath}/.cache-hash${taskName ? `-${taskName}` : ""}`;
-        }
-        // Pod-local path (default).
-        return `/tekton/home/.cache-${c.workspace.name}-hash`;
+    // ── Helpers ──────────────────────────────────────────────────────
+
+    /** Returns the zstd thread flag for this cache spec. */
+    private static _threadFlag(c: TaskCacheSpec): string {
+        const multi = c.multiThreadCompression ?? c.backend?.type === "gcs";
+        return multi ? "-T0" : "-T1";
     }
 
-    private static _makeCacheRestoreStep(
-        c: TaskCacheSpec,
-        taskName?: string,
-    ): TaskStepSpec {
-        const wsName = c.workspace.name;
-        const wsPath = `$(workspaces.${wsName}.path)`;
-        const hashFile = Task._hashFilePath(c, taskName);
-        const keyFiles = c.key.join(" ");
-        let script: string;
-        if (c.compress) {
-            let hashExpr: string;
-            if (c.key.length === 0) {
-                // Static hash — always the same key, always hits after the first run.
-                hashExpr = `let hash = ("" | hash sha256 | str substring 0..15)`;
-            } else {
-                const keyFileList = c.key.map((f) => `"${f}"`).join(", ");
-                hashExpr = `let hash = (
+    /** Returns the nushell hash-computation expression for the given key files. */
+    private static _hashExpr(c: TaskCacheSpec): string {
+        if (c.key.length === 0) {
+            return `let hash = ("" | hash sha256 | str substring 0..15)`;
+        }
+        const keyFileList = c.key.map((f) => `"${f}"`).join(", ");
+        return `let hash = (
   [${keyFileList}]
   | each { |f| if ($f | path exists) { open --raw $f } else { "" } }
   | str join | hash sha256 | str substring 0..15
 )`;
-            }
-            script = `#!/usr/bin/env nu
+    }
+
+    // ── PVC backend ────────────────────────────────────────────────
+
+    /** Returns the hash-file path for a PVC-backed cache. */
+    private static _pvcHashFilePath(c: TaskCacheSpec, taskName?: string): string {
+        const wsPath = `$(workspaces.${c.workspace!.name}.path)`;
+        if (c.saveStrategy === "finally") {
+            // Write to the cache PVC so it survives across pods.
+            return `${wsPath}/.cache-${c.name}-hash${taskName ? `-${taskName}` : ""}`;
+        }
+        // Pod-local path (default).
+        return `/tekton/home/.cache-${c.name}-hash`;
+    }
+
+    private static _makePvcRestoreScript(c: TaskCacheSpec, taskName?: string): string {
+        const wsName = c.workspace!.name;
+        const wsPath = `$(workspaces.${wsName}.path)`;
+        const hashFile = Task._pvcHashFilePath(c, taskName);
+        const threadFlag = Task._threadFlag(c);
+        const label = `restore-${c.name}-cache`;
+
+        if (c.compress) {
+            const hashExpr = Task._hashExpr(c);
+            return `#!/usr/bin/env nu
 def log [msg: string] {
-  print $"[(date now | format date '%H:%M:%S')] cache-restore-${wsName}: ($msg)"
+  print $"[(date now | format date '%H:%M:%S')] ${label}: ($msg)"
 }
 
 ${hashExpr}
@@ -237,47 +277,261 @@ $hash | save -f ${hashFile}
 let archive = $"${wsPath}/($hash).tar.zst"
 
 if ($archive | path exists) {
-  let size = (ls $archive | get size.0)
-  log $"hit ($hash) archive=($archive) size=($size)"
-  # Remove any pre-existing cache paths so stale read-only directories
-  # (e.g. Go module @version dirs with 0555) don't block extraction.
+  let archive_size = (ls $archive | get size.0)
+  log $"hit ($hash) size=($archive_size)"
   let cache_paths = [${c.paths.map((p) => `"${p}"`).join(", ")}]
   for p in $cache_paths {
-    if ($p | path exists) {
-      ^chmod -R u+w $p
-      rm -rf $p
-    }
+    if ($p | path exists) { ^chmod -R u+w $p; rm -rf $p }
   }
-  ^zstd -d -T1 -c $archive | ^tar xf - -o --no-same-permissions
-  log "restored"
+  let t0 = (date now)
+  ^zstd -d ${threadFlag} -c $archive | ^tar xf - -o --no-same-permissions
+  let elapsed = (((date now) - $t0) | into int) / 1_000_000_000
+  log $"restored in ($elapsed)s"
 } else {
-  log $"miss ($hash) archive=($archive)"
+  log $"miss ($hash)"
 }`;
-        } else {
-            const copyPaths = c.paths
-                .map(
-                    (p) =>
-                        `  [ -e "$CACHE_DIR/${p}" ] && cp -r "$CACHE_DIR/${p}" "./${p}" || true`,
-                )
-                .join("\n");
-            const hashCmd =
-                c.key.length === 0
-                    ? `HASH=$(echo -n "" | sha256sum | cut -c1-16)`
-                    : `HASH=$(cat ${keyFiles} | sha256sum | cut -c1-16)`;
-            script = `#!/bin/sh
+        }
+        // Uncompressed PVC restore
+        const keyFiles = c.key.join(" ");
+        const copyPaths = c.paths
+            .map(
+                (p) =>
+                    `  [ -e "$CACHE_DIR/${p}" ] && cp -r "$CACHE_DIR/${p}" "./${p}" || true`,
+            )
+            .join("\n");
+        const hashCmd =
+            c.key.length === 0
+                ? `HASH=$(echo -n "" | sha256sum | cut -c1-16)`
+                : `HASH=$(cat ${keyFiles} | sha256sum | cut -c1-16)`;
+        return `#!/bin/sh
 set -e
 ${hashCmd}
 echo "$HASH" > ${hashFile}
 CACHE_DIR="${wsPath}/$HASH"
 if [ -d "$CACHE_DIR" ]; then
-  echo "cache hit ($HASH)"
+  echo "[$(date +%H:%M:%S)] ${label}: hit $HASH"
 ${copyPaths}
 else
-  echo "cache miss ($HASH)"
+  echo "[$(date +%H:%M:%S)] ${label}: miss $HASH"
 fi`;
+    }
+
+    private static _makePvcSaveScript(c: TaskCacheSpec, taskName?: string): string {
+        const wsName = c.workspace!.name;
+        const wsPath = `$(workspaces.${wsName}.path)`;
+        const hashFile = Task._pvcHashFilePath(c, taskName);
+        const compressionLevel = c.compressionLevel ?? 1;
+        const maxEntries = c.maxEntries ?? 3;
+        const forceSave = c.forceSave ?? false;
+        const threadFlag = Task._threadFlag(c);
+        const label = `save-${c.name}-cache`;
+
+        if (c.compress) {
+            const pathList = c.paths.map((p) => `"${p}"`).join(", ");
+            const skipExisting = forceSave
+                ? ""
+                : `if ($archive | path exists) { log $"($hash) exists, skipping"; exit 0 }\n`;
+            return `#!/usr/bin/env nu
+def log [msg: string] {
+  print $"[(date now | format date '%H:%M:%S')] ${label}: ($msg)"
+}
+
+let hash = (try { open --raw ${hashFile} | str trim } catch { "" })
+if ($hash | is-empty) { log "no hash, skipping"; exit 0 }
+
+let archive = $"${wsPath}/($hash).tar.zst"
+${skipExisting}
+let paths = [${pathList}] | where { |p| ($p | path exists) }
+if ($paths | is-empty) { log "no paths to cache"; exit 0 }
+
+for p in $paths { ^chmod -R u+w $p }
+
+let max = ${maxEntries}
+if $max > 0 {
+  let entries = (try { ls ${wsPath}/*.tar.zst | sort-by modified | reverse | skip $max } catch { [] })
+  for e in $entries { log $"evicting ($e.name | path basename)"; rm $e.name }
+}
+
+let uncompressed = ($paths | each { |p| try { du $p | get apparent.0 | into int } catch { 0 } } | math sum)
+log $"compressing (($uncompressed / 1_000_000) | math round --precision 1)MB uncompressed ..."
+let t0 = (date now)
+^tar cf - ...$paths | ^zstd -${compressionLevel} ${threadFlag}${forceSave ? " -f" : ""} -o $archive
+let elapsed = (((date now) - $t0) | into int) / 1_000_000_000
+let compressed = (ls $archive | get size.0)
+let ratio = ($uncompressed / ($compressed | into int) | math round --precision 1)
+log $"saved ($compressed) ratio=($ratio)x in ($elapsed)s"`;
         }
+        // Uncompressed PVC save
+        const copyPaths = c.paths
+            .map((p) => `  cp -r "./${p}" "$CACHE_DIR/${p}"`)
+            .join("\n");
+        const saveCondition = forceSave
+            ? `echo "saving cache ($HASH)"\n  mkdir -p "$CACHE_DIR"\n${copyPaths}`
+            : `if [ ! -d "$CACHE_DIR" ]; then\n  echo "saving cache ($HASH)"\n  mkdir -p "$CACHE_DIR"\n${copyPaths}\nfi`;
+        return `#!/bin/sh
+HASH=$(cat ${hashFile} 2>/dev/null || echo "")
+[ -z "$HASH" ] && exit 0
+CACHE_DIR="${wsPath}/$HASH"
+${saveCondition}`;
+    }
+
+    // ── GCS backend ────────────────────────────────────────────────
+
+    /** Returns the hash-file path for a GCS-backed cache. */
+    private static _gcsHashFilePath(c: TaskCacheSpec, taskName?: string): string {
+        if (c.saveStrategy === "finally") {
+            return `/tekton/home/.cache-${c.name}-hash${taskName ? `-${taskName}` : ""}`;
+        }
+        return `/tekton/home/.cache-${c.name}-hash`;
+    }
+
+    private static _makeGcsRestoreScript(c: TaskCacheSpec, taskName?: string): string {
+        const gcs = c.backend as GcsCacheBackend;
+        const bucket = gcs.bucket;
+        const prefix = gcs.prefix ?? "";
+        const hashFile = Task._gcsHashFilePath(c, taskName);
+        const hashExpr = Task._hashExpr(c);
+        const threadFlag = Task._threadFlag(c);
+        const label = `restore-${c.name}-cache`;
+
+        return `#!/usr/bin/env nu
+def log [msg: string] {
+  print $"[(date now | format date '%H:%M:%S')] ${label}: ($msg)"
+}
+
+${hashExpr}
+$hash | save -f ${hashFile}
+
+let token_resp = (try {
+  http get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H [Metadata-Flavor Google]
+} catch { |e|
+  log $"ERROR: failed to fetch Workload Identity token: ($e.msg)"
+  exit 1
+})
+let token = ($token_resp | get access_token)
+let token_ttl = ($token_resp | get expires_in)
+log $"token ok, expires in ($token_ttl)s"
+
+let object = $"${prefix}($hash).tar.zst"
+let meta_url = $"https://storage.googleapis.com/storage/v1/b/${bucket}/o/($object | str replace --all '/' '%2F')"
+log $"checking gs://${bucket}/($object)"
+log $"  url: ($meta_url)"
+
+let metadata = (try {
+  http get $meta_url -H [Authorization $"Bearer ($token)"]
+} catch { |e|
+  log $"  miss: ($e.msg)"
+  null
+})
+
+if $metadata != null {
+  let archive_size = ($metadata.size | into int)
+  log $"hit ($hash) size=(($archive_size / 1_000_000) | math round --precision 1)MB"
+  let cache_paths = [${c.paths.map((p) => `"${p}"`).join(", ")}]
+  for p in $cache_paths {
+    if ($p | path exists) { ^chmod -R u+w $p; rm -rf $p }
+  }
+  log "downloading ..."
+  let t0 = (date now)
+  let dl_url = $"($meta_url)?alt=media"
+  http get $dl_url -H [Authorization $"Bearer ($token)"] --raw | ^zstd -d ${threadFlag} -c | ^tar xf - -o --no-same-permissions
+  let elapsed = (((date now) - $t0) | into int) / 1_000_000_000
+  let speed = (if $elapsed > 0 { ($archive_size / 1_000_000) / $elapsed | math round --precision 1 } else { 0 })
+  log $"restored in ($elapsed)s ($speed) MB/s"
+} else {
+  log $"miss ($hash) — object not found in bucket"
+}`;
+    }
+
+    private static _makeGcsSaveScript(c: TaskCacheSpec, taskName?: string): string {
+        const gcs = c.backend as GcsCacheBackend;
+        const bucket = gcs.bucket;
+        const prefix = gcs.prefix ?? "";
+        const hashFile = Task._gcsHashFilePath(c, taskName);
+        const compressionLevel = c.compressionLevel ?? DEFAULT_GCS_COMPRESSION_LEVEL;
+        const maxEntries = c.maxEntries ?? 3;
+        const forceSave = c.forceSave ?? false;
+        const threadFlag = Task._threadFlag(c);
+        const label = `save-${c.name}-cache`;
+        const pathList = c.paths.map((p) => `"${p}"`).join(", ");
+
+        const skipExisting = forceSave
+            ? ""
+            : `let meta_url = $"https://storage.googleapis.com/storage/v1/b/${bucket}/o/($object | str replace --all '/' '%2F')"
+let already_exists = (try { http get $meta_url -H [Authorization $"Bearer ($token)"]; true } catch { false })
+if $already_exists { log $"($hash) exists, skipping"; exit 0 }
+`;
+
+        return `#!/usr/bin/env nu
+def log [msg: string] {
+  print $"[(date now | format date '%H:%M:%S')] ${label}: ($msg)"
+}
+
+let hash = (try { open --raw ${hashFile} | str trim } catch { "" })
+if ($hash | is-empty) { log "no hash, skipping"; exit 0 }
+
+let token = (try {
+  http get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H [Metadata-Flavor Google] | get access_token
+} catch { |e|
+  log $"ERROR: failed to fetch Workload Identity token: ($e.msg)"
+  exit 1
+})
+
+let object = $"${prefix}($hash).tar.zst"
+${skipExisting}
+let paths = [${pathList}] | where { |p| ($p | path exists) }
+if ($paths | is-empty) { log "no paths to cache"; exit 0 }
+
+for p in $paths { ^chmod -R u+w $p }
+
+let max = ${maxEntries}
+if $max > 0 {
+  let list_url = $"https://storage.googleapis.com/storage/v1/b/${bucket}/o?prefix=($"${prefix}" | str replace --all '/' '%2F')"
+  let entries = (try {
+    http get $list_url -H [Authorization $"Bearer ($token)"]
+    | get items? | default []
+    | where { |e| ($e.name | str ends-with ".tar.zst") }
+    | sort-by timeCreated | reverse | skip $max
+  } catch { [] })
+  for e in $entries {
+    let del_url = $"https://storage.googleapis.com/storage/v1/b/${bucket}/o/($e.name | str replace --all '/' '%2F')"
+    try { http delete $del_url -H [Authorization $"Bearer ($token)"] }
+    log $"evicted ($e.name)"
+  }
+}
+
+let uncompressed = ($paths | each { |p| try { du $p | get apparent.0 | into int } catch { 0 } } | math sum)
+log $"compressing (($uncompressed / 1_000_000) | math round --precision 1)MB ..."
+let tmp = $"/tmp/cache-($hash).tar.zst"
+let t0 = (date now)
+^tar cf - ...$paths | ^zstd -${compressionLevel} ${threadFlag}${forceSave ? " -f" : ""} -o $tmp
+let compress_elapsed = (((date now) - $t0) | into int) / 1_000_000_000
+let compressed = (ls $tmp | get size.0 | into int)
+let ratio = (if $compressed > 0 { $uncompressed / $compressed | math round --precision 1 } else { 0 })
+log $"compressed to (($compressed / 1_000_000) | math round --precision 1)MB ratio=($ratio)x in ($compress_elapsed)s"
+
+log "uploading ..."
+let upload_url = $"https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=($object | str replace --all '/' '%2F')"
+let t1 = (date now)
+open --raw $tmp | http post $upload_url -H [Authorization $"Bearer ($token)"] -t "application/octet-stream"
+let upload_elapsed = (((date now) - $t1) | into int) / 1_000_000_000
+let speed = (if $upload_elapsed > 0 { ($compressed / 1_000_000) / $upload_elapsed | math round --precision 1 } else { 0 })
+rm $tmp
+log $"uploaded gs://${bucket}/($object) in ($upload_elapsed)s ($speed) MB/s"`;
+    }
+
+    // ── Step builders (dispatch by backend) ────────────────────────
+
+    private static _makeCacheRestoreStep(
+        c: TaskCacheSpec,
+        taskName?: string,
+    ): TaskStepSpec {
+        const script =
+            c.backend?.type === "gcs"
+                ? Task._makeGcsRestoreScript(c, taskName)
+                : Task._makePvcRestoreScript(c, taskName);
         return {
-            name: `cache-restore-${wsName}`,
+            name: `restore-${c.name}-cache`,
             image: c.image ?? DEFAULT_BASE_IMAGE,
             script,
             ...(c.workingDir ? { workingDir: c.workingDir } : {}),
@@ -291,62 +545,12 @@ fi`;
         c: TaskCacheSpec,
         taskName?: string,
     ): TaskStepSpec {
-        const wsName = c.workspace.name;
-        const wsPath = `$(workspaces.${wsName}.path)`;
-        const hashFile = Task._hashFilePath(c, taskName);
-        const compressionLevel = c.compressionLevel ?? 1;
-        const maxEntries = c.maxEntries ?? 3;
-        const forceSave = c.forceSave ?? false;
-        let script: string;
-        if (c.compress) {
-            const pathList = c.paths.map((p) => `"${p}"`).join(", ");
-            const skipExisting = forceSave
-                ? ""
-                : `if ($archive | path exists) { log $"($hash) exists, skipping"; exit 0 }\n`;
-            script = `#!/usr/bin/env nu
-def log [msg: string] {
-  print $"[(date now | format date '%H:%M:%S')] cache-save-${wsName}: ($msg)"
-}
-
-let hash = (try { open --raw ${hashFile} | str trim } catch { "" })
-if ($hash | is-empty) { log "no hash, skipping"; exit 0 }
-
-let archive = $"${wsPath}/($hash).tar.zst"
-${skipExisting}
-let paths = [${pathList}] | where { |p| ($p | path exists) }
-if ($paths | is-empty) { log "no paths to cache"; exit 0 }
-
-# Ensure all directories are writable so the archive doesn't contain
-# read-only dirs (e.g. Go module @version dirs with 0555 perms).
-for p in $paths { ^chmod -R u+w $p }
-
-# Evict old entries
-let max = ${maxEntries}
-if $max > 0 {
-  let entries = (try { ls ${wsPath}/*.tar.zst | sort-by modified | reverse | skip $max } catch { [] })
-  for e in $entries { log $"evicting ($e.name | path basename)"; rm $e.name }
-}
-
-log $"saving ($hash) ..."
-^tar cf - ...$paths | ^zstd -${compressionLevel} -T1${forceSave ? " -f" : ""} -o $archive
-
-let size = (ls $archive | get size.0)
-log $"saved archive=($archive) size=($size)"`;
-        } else {
-            const copyPaths = c.paths
-                .map((p) => `  cp -r "./${p}" "$CACHE_DIR/${p}"`)
-                .join("\n");
-            const saveCondition = forceSave
-                ? `echo "saving cache ($HASH)"\n  mkdir -p "$CACHE_DIR"\n${copyPaths}`
-                : `if [ ! -d "$CACHE_DIR" ]; then\n  echo "saving cache ($HASH)"\n  mkdir -p "$CACHE_DIR"\n${copyPaths}\nfi`;
-            script = `#!/bin/sh
-HASH=$(cat ${hashFile} 2>/dev/null || echo "")
-[ -z "$HASH" ] && exit 0
-CACHE_DIR="${wsPath}/$HASH"
-${saveCondition}`;
-        }
+        const script =
+            c.backend?.type === "gcs"
+                ? Task._makeGcsSaveScript(c, taskName)
+                : Task._makePvcSaveScript(c, taskName);
         return {
-            name: `cache-save-${wsName}`,
+            name: `save-${c.name}-cache`,
             image: c.image ?? DEFAULT_BASE_IMAGE,
             script,
             onError: "continue" as const,
@@ -427,20 +631,25 @@ ${saveCondition}`;
     getCacheFinallyTasks(): Task[] {
         return this.caches
             .filter((c) => c.saveStrategy === "finally")
-            .map(
-                (c) =>
-                    new Task({
-                        name: `cache-save-${c.workspace.name}-${this.name}`,
-                        workspaces: [
-                            c.workspace,
-                            ...this.workspaces.filter(
-                                (w) => w.name !== c.workspace.name,
-                            ),
-                        ],
-                        steps: [Task._makeCacheSaveStep(c, this.name)],
-                        stepTemplate: this.stepTemplate,
-                    }),
-            );
+            .map((c) => {
+                // GCS finally tasks use the source workspaces only (no PVC needed).
+                // PVC finally tasks prepend the cache workspace so hash files survive across pods.
+                const taskWorkspaces =
+                    c.backend?.type === "gcs"
+                        ? [...this.workspaces]
+                        : [
+                              c.workspace!,
+                              ...this.workspaces.filter(
+                                  (w) => w.name !== c.workspace!.name,
+                              ),
+                          ];
+                return new Task({
+                    name: `save-${c.name}-cache-${this.name}`,
+                    workspaces: taskWorkspaces,
+                    steps: [Task._makeCacheSaveStep(c, this.name)],
+                    stepTemplate: this.stepTemplate,
+                });
+            });
     }
 
     /** @internal Generates the pipeline task spec used inside a Pipeline resource. */

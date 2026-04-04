@@ -106,6 +106,40 @@ describe('TektonProject', () => {
     }).not.toThrow();
   });
 
+  it('constructs with GCS caches without error', () => {
+    const cacheWs = new Workspace({ name: 'npm-cache' });
+    expect(() => {
+      new TektonProject({
+        name: 'myapp',
+        namespace: 'ns',
+        pipelines: [
+          new Pipeline({ name: 'push', triggers: [TRIGGER_EVENTS.PUSH], tasks: [test] }),
+        ],
+        caches: [
+          { workspace: cacheWs, backend: { type: 'gcs', bucket: 'my-bucket' } },
+        ],
+      });
+    }).not.toThrow();
+  });
+
+  it('constructs with mixed PVC and GCS caches', () => {
+    const pvcWs = new Workspace({ name: 'pvc-cache' });
+    const gcsWs = new Workspace({ name: 'gcs-cache' });
+    expect(() => {
+      new TektonProject({
+        name: 'myapp',
+        namespace: 'ns',
+        pipelines: [
+          new Pipeline({ name: 'push', triggers: [TRIGGER_EVENTS.PUSH], tasks: [test] }),
+        ],
+        caches: [
+          { workspace: pvcWs, storageSize: '2Gi' },
+          { workspace: gcsWs, backend: { type: 'gcs', bucket: 'my-bucket' } },
+        ],
+      });
+    }).not.toThrow();
+  });
+
   it('deduplicates tasks shared across pipelines', () => {
     // Both pipelines share clone and test — should not throw duplicate errors
     expect(() => {

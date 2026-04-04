@@ -63,6 +63,13 @@ export const DEFAULT_BASE_IMAGE =
  * Default CPU/memory requests and limits applied to each task step.
  * Override per-step via the `computeResources` field on `TaskStepSpec`.
  */
+/**
+ * Default zstd compression level for GCS cache backends.
+ * Higher than the PVC default (1) because GCS targets robust environments
+ * where CPU is plentiful and reduced archive size speeds up transfers.
+ */
+export const DEFAULT_GCS_COMPRESSION_LEVEL = 3;
+
 export const DEFAULT_STEP_RESOURCES = {
     requests: { cpu: "100m", memory: "128Mi" },
     limits: { cpu: "1", memory: "512Mi" },

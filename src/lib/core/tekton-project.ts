@@ -4,6 +4,7 @@ import { Pipeline } from './pipeline';
 import { Task } from './task';
 import { Workspace } from './workspace';
 import { TRIGGER_EVENTS } from './trigger-events';
+import type { CacheBackend } from './cache-backend';
 
 /**
  * Specifies a persistent cache volume to provision and bind for a pipeline workspace.
@@ -23,6 +24,11 @@ export interface CacheSpec {
   claimName?: string;
   /** StorageClass for the PVC. Omitted when not set — cluster default applies. */
   storageClassName?: string;
+  /**
+   * Cache storage backend. When set to `{ type: 'gcs', ... }`, no PVC is
+   * provisioned for this cache — archives are stored in GCS instead.
+   */
+  backend?: CacheBackend;
 }
 
 /** Options for constructing a {@link TektonProject}. */
@@ -64,6 +70,17 @@ export interface TektonProjectOptions {
    * `stepTemplate.securityContext`; individual steps can override via `step.securityContext`.
    */
   defaultStepSecurityContext?: Record<string, unknown>;
+  /**
+   * Additional annotations to apply to the generated Tekton triggers ServiceAccount.
+   * Use this to configure GKE Workload Identity, e.g.:
+   *
+   * ```ts
+   * serviceAccountAnnotations: {
+   *   'iam.gke.io/gcp-service-account': 'tekton-ci@my-project.iam.gserviceaccount.com',
+   * }
+   * ```
+   */
+  serviceAccountAnnotations?: Record<string, string>;
 }
 
 /**
@@ -138,12 +155,17 @@ export class TektonProject {
         workspaceStorageClass: opts.workspaceStorageClass,
         workspaceAccessModes: opts.workspaceAccessModes,
         defaultPodSecurityContext: opts.defaultPodSecurityContext,
-        caches: (opts.caches ?? []).map(c => ({
-          workspaceName: c.workspace.name,
-          claimName: c.claimName ?? (prefix ? `${prefix}-${c.workspace.name}` : c.workspace.name),
-          storageSize: c.storageSize ?? '1Gi',
-          storageClassName: c.storageClassName,
-        })),
+        serviceAccountAnnotations: opts.serviceAccountAnnotations,
+        // Only PVC-backed caches need PVCs and workspace bindings in the infra chart.
+        // GCS caches store archives remotely and don't use PVCs.
+        caches: (opts.caches ?? [])
+          .filter(c => c.backend?.type !== 'gcs')
+          .map(c => ({
+            workspaceName: c.workspace.name,
+            claimName: c.claimName ?? (prefix ? `${prefix}-${c.workspace.name}` : c.workspace.name),
+            storageSize: c.storageSize ?? '1Gi',
+            storageClassName: c.storageClassName,
+          })),
       });
     }
 

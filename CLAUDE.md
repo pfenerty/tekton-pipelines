@@ -13,6 +13,10 @@ flox activate -- npm run synth
 The environment is defined in `.flox/env/manifest.toml` and currently provides:
 - Node.js 24.13.0 (npm bundled)
 
+## Issue Tracking
+
+Beads (`bd`) is configured for this project at `.beads/`. Use it for all task tracking — create an issue before starting work, mark in-progress when starting, close when done.
+
 ## Common Commands
 
 | Action | Command |
