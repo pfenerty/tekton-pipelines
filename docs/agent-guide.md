@@ -825,3 +825,13 @@ my-command; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC
 ```
 
 Prefer the script API (see [scripting.md](scripting.md)) to avoid this entirely.
+
+### Skipped, `when`-gated tasks
+
+A task with a `statusReporter` starts as `pending` (via the pipeline's auto-generated
+`set-status-pending-*` task) and normally resolves to `success`/`failure` via its own last step.
+If the task is also gated by a `when` condition (directly, or via `gated(task, { when })`) and
+gets skipped by Tekton, that last step never runs — so `Pipeline` auto-adds a
+`resolve-skipped-status-*` `finally` task that checks the skipped task's runtime status
+(`$(tasks.<name>.status)`) and resolves its context to `success`/`"Skipped"`. This is automatic;
+no extra configuration is needed.

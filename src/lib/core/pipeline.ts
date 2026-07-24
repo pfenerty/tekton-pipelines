@@ -7,6 +7,16 @@ import { Task, TaskLike, TaskDef } from './task';
 import { TRIGGER_EVENTS } from './trigger-events';
 import { triggerEvents } from './pac-trigger';
 import type { PipelineTrigger } from './pac-trigger';
+import type { PipelineTaskNode } from './pipeline-task';
+
+/**
+ * The `when` that will actually gate `task` in a pipeline: a `gated()` wrapper's override
+ * replaces the task's own `when` for that pipeline edge, so it takes precedence when present.
+ */
+function effectiveWhen(task: TaskDef): TaskDef['when'] {
+  const overrides = (task as unknown as Partial<PipelineTaskNode>)._overrides;
+  return overrides?.when !== undefined ? overrides.when : task.when;
+}
 
 /** Options for constructing a {@link Pipeline}. */
 export interface PipelineOptions {
@@ -86,6 +96,16 @@ export class Pipeline {
       const contexts = statusTasks.map(t => t.statusContext!);
       this._pendingTask = reporter.createPendingTask(contexts, `set-status-pending-${this.name}`);
       this.allTasks = [this._pendingTask, ...regularTasks];
+
+      // Tasks gated by `when` may be skipped by Tekton entirely, so their own report-status
+      // step (the task's last step) never runs and their context is stuck on "pending" from
+      // the task above. Resolve those in a `finally` task that runs after the whole DAG.
+      const gatedStatusTasks = statusTasks.filter(t => effectiveWhen(t) !== undefined);
+      if (gatedStatusTasks.length > 0 && reporter.createSkipResolverTask) {
+        const entries = gatedStatusTasks.map(t => ({ taskName: t.name, context: t.statusContext! }));
+        const skipResolverTask = reporter.createSkipResolverTask(entries, `resolve-skipped-status-${this.name}`);
+        (this.finallyTasks as TaskLike[]).push(skipResolverTask);
+      }
     } else {
       this.allTasks = regularTasks;
     }

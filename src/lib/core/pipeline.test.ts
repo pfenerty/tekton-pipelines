@@ -7,6 +7,8 @@ import { Result } from './result';
 import { Workspace } from './workspace';
 import { TRIGGER_EVENTS } from './trigger-events';
 import { GitHubStatusReporter } from '../reporters/github-status-reporter';
+import { gated } from './pipeline-task';
+import { onBranch } from './condition';
 
 describe('Pipeline', () => {
   const workspace = new Workspace({ name: 'workspace' });
@@ -220,6 +222,59 @@ describe('Pipeline', () => {
     expect(nameOf(push)).toBe('set-status-pending-push');
     expect(nameOf(pr)).toBe('set-status-pending-pull-request');
     expect(nameOf(push)).not.toBe(nameOf(pr));
+  });
+
+  it('a when-gated statusReporter task gets a skip-resolver finally task', () => {
+    const reporter = new GitHubStatusReporter();
+    const reportingTask = new Task({
+      name: 'deploy',
+      statusReporter: reporter,
+      when: onBranch('main'),
+      steps: [{ name: 's', image: 'alpine', onError: 'continue' }],
+    });
+    const pipeline = new Pipeline({ name: 'ci', tasks: [reportingTask] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const manifest = chart.toJson()[0];
+    const finallyTasks = manifest.spec.finally ?? [];
+    expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci')).toBeDefined();
+    // finally tasks are not chained via runAfter — they always run after the whole DAG.
+    expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci').runAfter).toBeUndefined();
+  });
+
+  it('gated() override with when also gets a skip-resolver finally task', () => {
+    const reporter = new GitHubStatusReporter();
+    const reportingTask = new Task({
+      name: 'publish',
+      statusReporter: reporter,
+      steps: [{ name: 's', image: 'alpine', onError: 'continue' }],
+    });
+    const pipeline = new Pipeline({
+      name: 'ci',
+      tasks: [gated(reportingTask, { when: onBranch('main') })],
+    });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const manifest = chart.toJson()[0];
+    const finallyTasks = manifest.spec.finally ?? [];
+    expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci')).toBeDefined();
+  });
+
+  it('an ungated statusReporter task does not trigger a skip-resolver task', () => {
+    const reporter = new GitHubStatusReporter();
+    const reportingTask = new Task({
+      name: 'test-ungated',
+      statusReporter: reporter,
+      steps: [{ name: 's', image: 'alpine', onError: 'continue' }],
+    });
+    const pipeline = new Pipeline({ name: 'ci', tasks: [reportingTask] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const manifest = chart.toJson()[0];
+    expect(manifest.spec.finally).toBeUndefined();
   });
 
   it('_build() omits finally when no finally tasks', () => {

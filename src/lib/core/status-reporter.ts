@@ -32,6 +32,17 @@ export interface StatusReporter {
    */
   finalStep(context: string): TaskStepSpec;
 
+  /**
+   * Returns a Task (for the pipeline's `finally` block) that resolves any context left on
+   * "pending" because its task was skipped by `when`. One step per entry, checking Tekton's
+   * `$(tasks.<taskName>.status)`; no-ops when the task actually ran (its own {@link finalStep}
+   * already reported it).
+   *
+   * Optional so existing external implementations of {@link StatusReporter} keep compiling —
+   * pipelines simply skip skip-resolution when a reporter doesn't implement it.
+   */
+  createSkipResolverTask?(entries: { taskName: string; context: string }[], name?: string): Task;
+
   /** Parameters required by this reporter (e.g., repo name, revision). */
   readonly requiredParams: Param[];
 }
