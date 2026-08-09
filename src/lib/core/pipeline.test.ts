@@ -241,6 +241,12 @@ describe('Pipeline', () => {
     expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci')).toBeDefined();
     // finally tasks are not chained via runAfter — they always run after the whole DAG.
     expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci').runAfter).toBeUndefined();
+    // The gated task's status must reach the resolver as a param — the only scope where
+    // Tekton substitutes $(tasks.*). Inlined in the step script it stays literal.
+    expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci').params)
+      .toContainEqual({ name: 'status-deploy', value: '$(tasks.deploy.status)' });
+    // ...and it must not leak into the pipeline's own params, which the PipelineRun supplies.
+    expect(manifest.spec.params.map((p: any) => p.name)).not.toContain('status-deploy');
   });
 
   it('gated() override with when also gets a skip-resolver finally task', () => {
