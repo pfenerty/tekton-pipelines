@@ -58,7 +58,7 @@ export { scriptFromFile, lintCommandForFile, languageNameForFile } from "./lib/s
 export type { ScriptLanguage, ScriptCtx, ScriptInput, ScriptObject, LanguageName } from "./lib/script";
 
 // Reporters
-export { GitHubStatusReporter } from "./lib/reporters/github-status-reporter";
+export { GitHubStatusReporter, statusParam } from "./lib/reporters/github-status-reporter";
 export type { GitHubStatusReporterOptions } from "./lib/reporters/github-status-reporter";
 
 // Re-exported from cdk8s / constructs so downstream projects depend only on tektonic
