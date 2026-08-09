@@ -28,6 +28,12 @@ export interface ScriptCtx {
    * {@link ScriptCtx.exitCodePath}, and still exit with that code — so a
    * later status step can read it. Set when the task reports status.
    * When `false`, the body runs without exit-code capture.
+   *
+   * A capturing wrapper must also make {@link ScriptCtx.exitCodePath} writable
+   * by every step in the pod before it uses it: steps can declare their own
+   * `securityContext.runAsUser`, and a file created by the first step at the
+   * default 0644 is read-only for a step running as a different uid, whose
+   * exit code would then be dropped in silence.
    */
   captureExitCode: boolean;
 }

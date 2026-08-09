@@ -39,6 +39,16 @@ export class Python implements ScriptLanguage {
     const mainBody = indented.trim().length ? indented : '    pass';
     return [
       this.preamble(),
+      // See Sh.wrap: the contract file is shared across steps that may run as
+      // different uids, so seed it and make it group/other-writable before the
+      // body. Best-effort — a non-owner's chmod raises, and by then need not run.
+      'import os as _tek_os',
+      'try:',
+      `    if not _tek_os.path.exists("${ctx.exitCodePath}"):`,
+      `        with open("${ctx.exitCodePath}", "w") as _f: _f.write("0")`,
+      `    _tek_os.chmod("${ctx.exitCodePath}", 0o666)`,
+      'except OSError:',
+      '    pass',
       'def _tek_main():',
       mainBody,
       '_tek_rc = 0',

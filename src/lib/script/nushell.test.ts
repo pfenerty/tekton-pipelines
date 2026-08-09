@@ -36,4 +36,14 @@ describe('Nushell plugin', () => {
     expect(out).toContain(`$"($__tek_worst)" | save -f ${EXIT_CODE_PATH}`);
     expect(out).toContain('exit $__tek_rc');
   });
+
+  it('with capture, seeds the contract file and opens it up to other uids', () => {
+    const out = nu.wrap('print hi', ctx(true));
+    expect(out).toContain(
+      `if not ("${EXIT_CODE_PATH}" | path exists) { try { "0" | save -f ${EXIT_CODE_PATH} } }`,
+    );
+    expect(out).toContain(`try { ^chmod 0666 ${EXIT_CODE_PATH} }`);
+    // Must precede the body: a step running as another uid has to find it already open.
+    expect(out.indexOf('^chmod 0666')).toBeLessThan(out.indexOf('def main [] {'));
+  });
 });

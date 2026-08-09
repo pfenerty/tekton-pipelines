@@ -31,6 +31,14 @@ describe('Sh plugin', () => {
     expect(out).toContain(`__tek_prev=$(cat ${EXIT_CODE_PATH} 2>/dev/null || echo 0)`);
     expect(out).toContain('exit "$__tek_rc"');
   });
+
+  it('with capture, seeds the contract file and opens it up to other uids', () => {
+    const out = shp.wrap('exit 3', ctx(true));
+    expect(out).toContain(`[ -e ${EXIT_CODE_PATH} ] || printf '%s' 0 > ${EXIT_CODE_PATH}`);
+    expect(out).toContain(`chmod 0666 ${EXIT_CODE_PATH} 2>/dev/null || true`);
+    // Must precede the body: a step running as another uid has to find it already open.
+    expect(out.indexOf('chmod 0666')).toBeLessThan(out.indexOf('(\nexit 3\n)'));
+  });
 });
 
 describe('Bash extends Sh', () => {

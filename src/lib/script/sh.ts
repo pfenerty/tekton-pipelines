@@ -28,6 +28,16 @@ export class Sh implements ScriptLanguage {
     }
     return [
       this.preamble(),
+      // The contract file is shared by every step in the pod, but each step may run
+      // as a different uid (a step with its own securityContext.runAsUser — e.g. a
+      // rootless buildkit image at uid 1000 — alongside steps at the pod default).
+      // Whoever creates the file first owns it at the default 0644, which leaves it
+      // read-only for the others, so their exit codes were silently dropped and the
+      // reporter read a stale 0. Seed it with a real 0 (an empty file would break
+      // the numeric comparison below) and open it up. Both lines are best-effort:
+      // a later step that is not the owner cannot chmod, and by then need not.
+      `[ -e ${ctx.exitCodePath} ] || printf '%s' 0 > ${ctx.exitCodePath}`,
+      `chmod 0666 ${ctx.exitCodePath} 2>/dev/null || true`,
       '(',
       body,
       ')',

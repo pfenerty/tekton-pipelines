@@ -29,6 +29,12 @@ export class Nushell implements ScriptLanguage {
     }
     return [
       this.preamble(),
+      // See Sh.wrap: the contract file is shared across steps that may run as
+      // different uids, so seed it and make it group/other-writable before the
+      // body. Both statements are best-effort — a non-owner's chmod fails, and
+      // by then the owner has already opened the file up.
+      `if not ("${ctx.exitCodePath}" | path exists) { try { "0" | save -f ${ctx.exitCodePath} } }`,
+      `try { ^chmod 0666 ${ctx.exitCodePath} }`,
       'def main [] {',
       body,
       '}',

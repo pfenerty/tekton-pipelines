@@ -33,6 +33,14 @@ describe('Python plugin', () => {
     expect(out).toContain('sys.exit(_tek_rc)');
   });
 
+  it('with capture, seeds the contract file and opens it up to other uids', () => {
+    const out = py.wrap('sys.exit(2)', ctx(true));
+    expect(out).toContain(`if not _tek_os.path.exists("${EXIT_CODE_PATH}"):`);
+    expect(out).toContain(`_tek_os.chmod("${EXIT_CODE_PATH}", 0o666)`);
+    // Must precede the body: a step running as another uid has to find it already open.
+    expect(out.indexOf('_tek_os.chmod')).toBeLessThan(out.indexOf('def _tek_main():'));
+  });
+
   it('falls back to pass for an empty body', () => {
     const out = py.wrap('   ', ctx(true));
     expect(out).toContain('def _tek_main():\n    pass');
