@@ -456,9 +456,17 @@ export class TaskDef implements TaskLike {
         const saveSteps = this.caches
             .filter((c) => c.saveStrategy !== "finally")
             .map((c) => (c.backend ?? new PvcBackend()).saveStep(c, this.name, ctx));
+        // Only the user steps' names are handed to the reporter. The cache restore/save
+        // steps also run with onError:'continue', so Tekton records exit codes for them
+        // too — but a failed cache save must stay non-fatal, so they are excluded.
         const reporterStep =
             this.statusReporter && this.statusContext
-                ? [this.statusReporter.finalStep(this.statusContext)]
+                ? [
+                      this.statusReporter.finalStep(
+                          this.statusContext,
+                          this.steps.map((s) => s.name),
+                      ),
+                  ]
                 : [];
         // When this task reports status, the framework owns the exit-code contract:
         // user steps capture their (worst) exit code to EXIT_CODE_PATH and run with

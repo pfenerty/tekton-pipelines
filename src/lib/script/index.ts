@@ -5,7 +5,7 @@ import { Python } from './python';
 import type { ScriptLanguage, ScriptCtx } from './types';
 
 export type { ScriptLanguage, ScriptCtx } from './types';
-export { EXIT_CODE_PATH } from './types';
+export { EXIT_CODE_PATH, stepExitCodePath } from './types';
 export { Sh } from './sh';
 export { Bash } from './bash';
 export { Nushell } from './nushell';

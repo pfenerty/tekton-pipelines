@@ -11,6 +11,28 @@
 export const EXIT_CODE_PATH = '/tekton/home/.exit-code' as const;
 
 /**
+ * Path at which Tekton records a step's own exit code, as a symlink into
+ * `/tekton/run/<index>/status/exitCode`.
+ *
+ * This is Tekton's mechanism, not tektonic's, and it is authoritative where
+ * {@link EXIT_CODE_PATH} is not: the contract file is written *by the wrapped
+ * script*, so a body that calls the shell's `exit` — untrappable in nushell —
+ * terminates before the wrapper can persist anything, leaving a stale `0` that
+ * a reporter reads as success. Tekton writes this file from the entrypoint
+ * binary instead, so it survives that.
+ *
+ * Verified against Tekton on a live cluster rather than taken from the docs:
+ * the file is written for *every* completed step (not only failed ones) and
+ * regardless of whether the step sets `onError`, at mode 0644 so a step running
+ * as a different uid can still read it. It is absent only for the step
+ * currently executing — which is the reporter's own position, so a reporter can
+ * never read itself.
+ */
+export function stepExitCodePath(stepName: string): string {
+  return `/tekton/steps/step-${stepName}/exitCode`;
+}
+
+/**
  * Context passed to {@link ScriptLanguage.wrap} at synth time.
  *
  * Carries the framework concerns a language plugin must honour when wrapping a

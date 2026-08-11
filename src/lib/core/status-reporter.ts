@@ -29,8 +29,19 @@ export interface StatusReporter {
    * step, automatically enables exit-code capture and sets `onError: 'continue'`
    * — so the user body just exits naturally; no manual contract-file writes are
    * needed.
+   *
+   * `userStepNames` lists the task's user steps in order, so an implementation
+   * can also consult Tekton's own per-step exit codes (see `stepExitCodePath`)
+   * instead of trusting only the in-script contract file, which a body calling
+   * the shell's `exit` bypasses. The framework's injected cache restore/save
+   * steps are deliberately excluded from the list: they carry
+   * `onError: 'continue'` of their own, and a failed cache save must not fail
+   * the task.
+   *
+   * Optional so existing external implementations of {@link StatusReporter}
+   * keep compiling.
    */
-  finalStep(context: string): TaskStepSpec;
+  finalStep(context: string, userStepNames?: string[]): TaskStepSpec;
 
   /**
    * Returns a Task (for the pipeline's `finally` block) that resolves any context left on
