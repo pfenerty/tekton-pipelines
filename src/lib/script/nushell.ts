@@ -26,10 +26,39 @@ export class Nushell implements ScriptLanguage {
     ].join('\n');
   }
 
+  /**
+   * Warns about a non-zero `exit` in a capturing body.
+   *
+   * Not an error. Before the reporter learned to read Tekton's per-step exit
+   * codes this was a silent-green bug; now it is only a loss of signal — the
+   * process dies before the catch above runs, so the failure is reported but
+   * arrives with no `error [task/step]` line explaining it. `error make` keeps
+   * both.
+   *
+   * `exit 0` is exempt: an early return from a body with nothing to do is a
+   * legitimate and common shape, and it cannot hide a failure.
+   */
+  private warnOnExit(body: string, ctx: ScriptCtx): void {
+    const scannable = body
+      // Raw strings carry scripts for *other* interpreters — ocidex's
+      // go-vulncheck watchdog embeds a POSIX sh body whose `exit 99` is correct.
+      .replace(/r(#+)'[\s\S]*?'\1/g, '')
+      .replace(/^\s*#.*$/gm, '');
+    for (const [, arg] of scannable.matchAll(/(?:^|[;(|{\s])exit\s+(\S+)/g)) {
+      if (arg === '0') continue;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `tektonic${scriptLabel(ctx)}: nushell 'exit ${arg}' terminates before the ` +
+          `wrapper can report what failed. Use 'error make {msg: "..."}' instead.`,
+      );
+    }
+  }
+
   wrap(body: string, ctx: ScriptCtx): string {
     if (!ctx.captureExitCode) {
       return `${this.preamble()}\n${body}`;
     }
+    this.warnOnExit(body, ctx);
     return [
       this.preamble(),
       // See Sh.wrap: the contract file is shared across steps that may run as
