@@ -46,4 +46,25 @@ describe('Nushell plugin', () => {
     // Must precede the body: a step running as another uid has to find it already open.
     expect(out.indexOf('^chmod 0666')).toBeLessThan(out.indexOf('def main [] {'));
   });
+
+  describe('failure attribution', () => {
+    it('names the task and step in the catch line', () => {
+      const out = nu.wrap('^gofmt -l .', {
+        ...ctx(true),
+        taskName: 'gofmt-check',
+        stepName: 'fmt',
+      });
+      expect(out).toContain('print $"error [gofmt-check/fmt]: ($e.msg)"');
+    });
+
+    it('falls back to an unlabelled line when the ctx carries no names', () => {
+      const out = nu.wrap('^gofmt -l .', ctx(true));
+      expect(out).toContain('print $"error: ($e.msg)"');
+    });
+
+    it('uses whichever name is present', () => {
+      const out = nu.wrap('^gofmt -l .', { ...ctx(true), taskName: 'gofmt-check' });
+      expect(out).toContain('print $"error [gofmt-check]: ($e.msg)"');
+    });
+  });
 });

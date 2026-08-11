@@ -474,7 +474,11 @@ export class TaskDef implements TaskLike {
         // The user body therefore just exits naturally — no hand-written plumbing.
         const reporting = Boolean(this.statusReporter && this.statusContext);
         const defaultLanguage = this.defaultLanguage ?? projectDefaultLanguage;
-        const userCtx: ScriptCtx = { exitCodePath: EXIT_CODE_PATH, captureExitCode: reporting };
+        const userCtx: ScriptCtx = {
+            exitCodePath: EXIT_CODE_PATH,
+            captureExitCode: reporting,
+            taskName: this.name,
+        };
         const libCtx: ScriptCtx = { exitCodePath: EXIT_CODE_PATH, captureExitCode: false };
 
         const renderStep = (
@@ -485,7 +489,9 @@ export class TaskDef implements TaskLike {
             const { securityContext, script, onError, ...rest } = s;
             const out: Record<string, unknown> = { ...rest };
             if (script !== undefined) {
-                out.script = renderScript(script, renderCtx, defaultLanguage);
+                // stepName is per-step, so it is layered on here rather than baked
+                // into the shared ctx above.
+                out.script = renderScript(script, { ...renderCtx, stepName: s.name }, defaultLanguage);
             }
             const effectiveOnError = onError ?? (injectOnError ? "continue" : undefined);
             if (effectiveOnError) out.onError = effectiveOnError;

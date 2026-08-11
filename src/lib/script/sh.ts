@@ -1,4 +1,4 @@
-import type { ScriptLanguage, ScriptCtx } from './types';
+import { scriptLabel, type ScriptLanguage, type ScriptCtx } from './types';
 
 /**
  * POSIX `sh` scripting language plugin (the portable default for Alpine/BusyBox
@@ -42,6 +42,10 @@ export class Sh implements ScriptLanguage {
       body,
       ')',
       '__tek_rc=$?',
+      // Attribute the failure. On a report-only task (a reporter with failOnError:false)
+      // the log is the entire signal, and `sh` reports nothing of its own when the body
+      // exits non-zero — see ScriptCtx.taskName.
+      `if [ "$__tek_rc" -ne 0 ]; then log "error${scriptLabel(ctx)}: exited with status $__tek_rc"; fi`,
       `__tek_prev=$(cat ${ctx.exitCodePath} 2>/dev/null || echo 0)`,
       'if [ "$__tek_rc" -gt "$__tek_prev" ]; then __tek_prev="$__tek_rc"; fi',
       `printf '%s' "$__tek_prev" > ${ctx.exitCodePath}`,
