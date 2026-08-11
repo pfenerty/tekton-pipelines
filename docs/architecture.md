@@ -126,9 +126,14 @@ and `GcsBackend` are the built-ins; shared key-hashing/compression helpers live 
 ### `StatusReporter` (`src/lib/core/status-reporter.ts`)
 
 Supplies `requiredParams`, a `createPendingTask(contexts)` (run first to mark everything pending),
-and a `finalStep(context)` appended to each reporting task. The final step reads
-`EXIT_CODE_PATH` — which the framework guarantees is populated because reporting tasks render
-their user steps with exit-code capture and `onError: 'continue'`. `GitHubStatusReporter` is the
+and a `finalStep(context, userStepNames)` appended to each reporting task. The final step takes
+the worst of two exit codes: `EXIT_CODE_PATH`, which the framework guarantees is populated
+because reporting tasks render their user steps with exit-code capture and `onError: 'continue'`;
+and `/tekton/steps/step-<name>/exitCode` for each named user step, which Tekton's own entrypoint
+writes. The second source exists because the first is written *by the wrapped script*, so a body
+calling nushell's untrappable `exit` terminates before the wrapper can persist anything and
+leaves a stale `0`. Only the user steps are consulted — the injected cache steps also run with
+`onError: 'continue'`, but a failed cache save must stay non-fatal. `GitHubStatusReporter` is the
 built-in.
 
 ## Key design decisions
