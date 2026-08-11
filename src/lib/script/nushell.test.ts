@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Nushell } from './nushell';
 import { EXIT_CODE_PATH } from './types';
 
@@ -45,5 +45,58 @@ describe('Nushell plugin', () => {
     expect(out).toContain(`try { ^chmod 0666 ${EXIT_CODE_PATH} }`);
     // Must precede the body: a step running as another uid has to find it already open.
     expect(out.indexOf('^chmod 0666')).toBeLessThan(out.indexOf('def main [] {'));
+  });
+
+  describe('failure attribution', () => {
+    it('names the task and step in the catch line', () => {
+      const out = nu.wrap('^gofmt -l .', {
+        ...ctx(true),
+        taskName: 'gofmt-check',
+        stepName: 'fmt',
+      });
+      expect(out).toContain('print $"error [gofmt-check/fmt]: ($e.msg)"');
+    });
+
+    it('falls back to an unlabelled line when the ctx carries no names', () => {
+      const out = nu.wrap('^gofmt -l .', ctx(true));
+      expect(out).toContain('print $"error: ($e.msg)"');
+    });
+
+    it('uses whichever name is present', () => {
+      const out = nu.wrap('^gofmt -l .', { ...ctx(true), taskName: 'gofmt-check' });
+      expect(out).toContain('print $"error [gofmt-check]: ($e.msg)"');
+    });
+  });
+
+  describe('non-zero exit warning', () => {
+    const warn = () => vi.spyOn(console, 'warn').mockImplementation(() => {});
+    afterEach(() => vi.restoreAllMocks());
+
+    it('warns, naming the task and step and the replacement', () => {
+      const spy = warn();
+      nu.wrap('if $bad { exit 1 }', { ...ctx(true), taskName: 'fmt', stepName: 'check' });
+      expect(spy).toHaveBeenCalledTimes(1);
+      const msg = spy.mock.calls[0][0] as string;
+      expect(msg).toContain('[fmt/check]');
+      expect(msg).toContain('error make');
+    });
+
+    it('does not warn on exit 0, an early return that cannot hide a failure', () => {
+      const spy = warn();
+      nu.wrap('if $skip { exit 0 }\nlog "work"', ctx(true));
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn about an exit inside a raw string bound for another interpreter', () => {
+      const spy = warn();
+      nu.wrap(`^sh -c r#'if [ -n "$x" ]; then exit 99; fi'#`, ctx(true));
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn on a non-capturing body, which owns its own exit code', () => {
+      const spy = warn();
+      nu.wrap('exit 1', ctx(false));
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 });

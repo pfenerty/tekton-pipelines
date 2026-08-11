@@ -11,6 +11,37 @@
 export const EXIT_CODE_PATH = '/tekton/home/.exit-code' as const;
 
 /**
+ * Path at which Tekton records a step's own exit code, as a symlink into
+ * `/tekton/run/<index>/status/exitCode`.
+ *
+ * This is Tekton's mechanism, not tektonic's, and it is authoritative where
+ * {@link EXIT_CODE_PATH} is not: the contract file is written *by the wrapped
+ * script*, so a body that calls the shell's `exit` — untrappable in nushell —
+ * terminates before the wrapper can persist anything, leaving a stale `0` that
+ * a reporter reads as success. Tekton writes this file from the entrypoint
+ * binary instead, so it survives that.
+ *
+ * Verified against Tekton on a live cluster rather than taken from the docs:
+ * the file is written for *every* completed step (not only failed ones) and
+ * regardless of whether the step sets `onError`, at mode 0644 so a step running
+ * as a different uid can still read it. It is absent only for the step
+ * currently executing — which is the reporter's own position, so a reporter can
+ * never read itself.
+ */
+export function stepExitCodePath(stepName: string): string {
+  return `/tekton/steps/step-${stepName}/exitCode`;
+}
+
+/**
+ * ` [task/step]` for a wrapper's failure line, or `''` when the context carries
+ * neither name. Shared so every language plugin labels failures identically.
+ */
+export function scriptLabel(ctx: Pick<ScriptCtx, 'taskName' | 'stepName'>): string {
+  const parts = [ctx.taskName, ctx.stepName].filter(Boolean);
+  return parts.length ? ` [${parts.join('/')}]` : '';
+}
+
+/**
  * Context passed to {@link ScriptLanguage.wrap} at synth time.
  *
  * Carries the framework concerns a language plugin must honour when wrapping a
@@ -36,6 +67,21 @@ export interface ScriptCtx {
    * exit code would then be dropped in silence.
    */
   captureExitCode: boolean;
+  /**
+   * Task and step this body belongs to, used to attribute the failure line a
+   * capturing wrapper emits.
+   *
+   * Without them a failed external command reports only nushell's generic
+   * "External command had a non-zero exit code" — no task, no step, no command.
+   * For a report-only task (a reporter with `failOnError: false`) that line and
+   * the check's colour are the *only* signal there is, so an anonymous one is
+   * close to no signal at all.
+   *
+   * Optional: a body rendered outside a task (tests, the library's own injected
+   * steps) simply gets the unlabelled form.
+   */
+  taskName?: string;
+  stepName?: string;
 }
 
 /**

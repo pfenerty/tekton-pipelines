@@ -156,10 +156,19 @@ still runs. Tektonic owns this plumbing:
   **capture** the exit code.
 - The plugin wraps your body so it runs, records the **worst** exit code seen across the task's
   steps to `EXIT_CODE_PATH` (`/tekton/home/.exit-code`), and re-exits with its own code.
-- The reporter's final step reads that file to decide success/failure.
+- The plugin also prints `error [<task>/<step>]: <message>` when the body fails, so a report-only
+  task (`failOnError: false`) says in its log what went wrong rather than just turning red.
+- The reporter's final step decides success/failure from the **worst** of that file and Tekton's
+  own `/tekton/steps/step-<name>/exitCode` for each user step.
 
 You therefore **do not** hand-write `echo $? > /tekton/home/.exit-code` or set
 `onError` — write the body as if it runs normally and `exit`/`error make`/`sys.exit` naturally.
+
+> **Prefer `error make` to `exit 1` in nushell.** Both are now reported correctly — the reporter
+> reads Tekton's per-step exit code, which survives nushell's untrappable `exit` — but `exit`
+> kills the process before the wrapper's catch runs, so the failure arrives with no message
+> attached. Tektonic warns at synth time on a non-zero `exit` in a capturing nu body. `exit 0` is
+> fine: an early return from a body with nothing to do cannot hide a failure.
 
 > **Legacy caveat:** this automatic capture only applies to tagged/object/file scripts (and
 > bare strings rendered via a default language). A raw string that begins with a shebang is

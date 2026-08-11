@@ -1498,6 +1498,22 @@ describe('Task', () => {
       expect(report.script).toContain(EXIT_CODE_PATH);
     });
 
+    it('labels each user step with its own task/step name', () => {
+      const t = new Task({
+        name: 'go-security',
+        statusReporter: new GitHubStatusReporter(),
+        steps: [
+          { name: 'vulncheck', image: 'alpine', script: nu`log "a"` },
+          { name: 'grype', image: 'alpine', script: nu`log "b"` },
+        ],
+      });
+      const steps = synthSteps(t);
+      expect(steps.find((s) => s.name === 'vulncheck')!.script).toContain(
+        'error [go-security/vulncheck]',
+      );
+      expect(steps.find((s) => s.name === 'grype')!.script).toContain('error [go-security/grype]');
+    });
+
     it('does not capture or inject onError when there is no reporter', () => {
       const t = new Task({
         name: 'fmt',

@@ -1,4 +1,4 @@
-import type { ScriptLanguage, ScriptCtx } from './types';
+import { scriptLabel, type ScriptLanguage, type ScriptCtx } from './types';
 
 /**
  * Nushell scripting language plugin.
@@ -7,10 +7,13 @@ import type { ScriptLanguage, ScriptCtx } from './types';
  * in consumers. Nushell's `exit` terminates the process immediately and cannot
  * be trapped, so the captured-exit contract runs the body inside `def main []`
  * wrapped in `try/catch`: clean completion yields `0`, a raised nushell error
- * yields `1`. Bodies signal failure by raising (`error make`) or by a failing
- * external command — not by calling `exit` directly, which would bypass the
- * capture. The contract file keeps the *worst* code seen across a task's steps
- * (a later success cannot mask an earlier failure); the step re-exits its own.
+ * yields `1`. Bodies should still signal failure by raising (`error make`) or
+ * by letting an external command fail, since that is what produces a readable
+ * message — but `exit` is no longer a trap: the reporter also reads Tekton's
+ * own per-step exit code, which is recorded by the entrypoint and so survives a
+ * body that terminates before this wrapper runs. The contract file keeps the
+ * *worst* code seen across a task's steps (a later success cannot mask an
+ * earlier failure); the step re-exits its own.
  */
 export class Nushell implements ScriptLanguage {
   readonly name = 'nushell';
@@ -23,10 +26,39 @@ export class Nushell implements ScriptLanguage {
     ].join('\n');
   }
 
+  /**
+   * Warns about a non-zero `exit` in a capturing body.
+   *
+   * Not an error. Before the reporter learned to read Tekton's per-step exit
+   * codes this was a silent-green bug; now it is only a loss of signal — the
+   * process dies before the catch above runs, so the failure is reported but
+   * arrives with no `error [task/step]` line explaining it. `error make` keeps
+   * both.
+   *
+   * `exit 0` is exempt: an early return from a body with nothing to do is a
+   * legitimate and common shape, and it cannot hide a failure.
+   */
+  private warnOnExit(body: string, ctx: ScriptCtx): void {
+    const scannable = body
+      // Raw strings carry scripts for *other* interpreters — ocidex's
+      // go-vulncheck watchdog embeds a POSIX sh body whose `exit 99` is correct.
+      .replace(/r(#+)'[\s\S]*?'\1/g, '')
+      .replace(/^\s*#.*$/gm, '');
+    for (const [, arg] of scannable.matchAll(/(?:^|[;(|{\s])exit\s+(\S+)/g)) {
+      if (arg === '0') continue;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `tektonic${scriptLabel(ctx)}: nushell 'exit ${arg}' terminates before the ` +
+          `wrapper can report what failed. Use 'error make {msg: "..."}' instead.`,
+      );
+    }
+  }
+
   wrap(body: string, ctx: ScriptCtx): string {
     if (!ctx.captureExitCode) {
       return `${this.preamble()}\n${body}`;
     }
+    this.warnOnExit(body, ctx);
     return [
       this.preamble(),
       // See Sh.wrap: the contract file is shared across steps that may run as
@@ -38,7 +70,12 @@ export class Nushell implements ScriptLanguage {
       'def main [] {',
       body,
       '}',
-      'let __tek_rc = (try { main; 0 } catch { |e| print $"error: ($e.msg)"; 1 })',
+      // Attribute the failure. nushell's message for a failed external command is the
+      // generic "External command had a non-zero exit code", which on a report-only task
+      // is the entire signal — see ScriptCtx.taskName. Task and step names are Kubernetes
+      // names (alphanumeric + dash), so they cannot introduce the bare parentheses that
+      // nushell would evaluate inside an interpolated string.
+      `let __tek_rc = (try { main; 0 } catch { |e| print $"error${scriptLabel(ctx)}: ($e.msg)"; 1 })`,
       `let __tek_prev = (try { open --raw ${ctx.exitCodePath} | str trim | into int } catch { 0 })`,
       'let __tek_worst = ([$__tek_prev $__tek_rc] | math max)',
       `$"($__tek_worst)" | save -f ${ctx.exitCodePath}`,

@@ -456,9 +456,17 @@ export class TaskDef implements TaskLike {
         const saveSteps = this.caches
             .filter((c) => c.saveStrategy !== "finally")
             .map((c) => (c.backend ?? new PvcBackend()).saveStep(c, this.name, ctx));
+        // Only the user steps' names are handed to the reporter. The cache restore/save
+        // steps also run with onError:'continue', so Tekton records exit codes for them
+        // too — but a failed cache save must stay non-fatal, so they are excluded.
         const reporterStep =
             this.statusReporter && this.statusContext
-                ? [this.statusReporter.finalStep(this.statusContext)]
+                ? [
+                      this.statusReporter.finalStep(
+                          this.statusContext,
+                          this.steps.map((s) => s.name),
+                      ),
+                  ]
                 : [];
         // When this task reports status, the framework owns the exit-code contract:
         // user steps capture their (worst) exit code to EXIT_CODE_PATH and run with
@@ -466,7 +474,11 @@ export class TaskDef implements TaskLike {
         // The user body therefore just exits naturally — no hand-written plumbing.
         const reporting = Boolean(this.statusReporter && this.statusContext);
         const defaultLanguage = this.defaultLanguage ?? projectDefaultLanguage;
-        const userCtx: ScriptCtx = { exitCodePath: EXIT_CODE_PATH, captureExitCode: reporting };
+        const userCtx: ScriptCtx = {
+            exitCodePath: EXIT_CODE_PATH,
+            captureExitCode: reporting,
+            taskName: this.name,
+        };
         const libCtx: ScriptCtx = { exitCodePath: EXIT_CODE_PATH, captureExitCode: false };
 
         const renderStep = (
@@ -477,7 +489,9 @@ export class TaskDef implements TaskLike {
             const { securityContext, script, onError, ...rest } = s;
             const out: Record<string, unknown> = { ...rest };
             if (script !== undefined) {
-                out.script = renderScript(script, renderCtx, defaultLanguage);
+                // stepName is per-step, so it is layered on here rather than baked
+                // into the shared ctx above.
+                out.script = renderScript(script, { ...renderCtx, stepName: s.name }, defaultLanguage);
             }
             const effectiveOnError = onError ?? (injectOnError ? "continue" : undefined);
             if (effectiveOnError) out.onError = effectiveOnError;

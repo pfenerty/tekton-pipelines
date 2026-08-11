@@ -39,6 +39,21 @@ describe('Sh plugin', () => {
     // Must precede the body: a step running as another uid has to find it already open.
     expect(out.indexOf('chmod 0666')).toBeLessThan(out.indexOf('(\nexit 3\n)'));
   });
+
+  it('names the task and step on a non-zero body, unlabelled without them', () => {
+    const named = shp.wrap('exit 3', { ...ctx(true), taskName: 'go-test', stepName: 'test' });
+    expect(named).toContain(
+      'if [ "$__tek_rc" -ne 0 ]; then log "error [go-test/test]: exited with status $__tek_rc"; fi',
+    );
+    expect(shp.wrap('exit 3', ctx(true))).toContain(
+      'log "error: exited with status $__tek_rc"',
+    );
+  });
+
+  it('does not attribute anything when not capturing', () => {
+    const out = shp.wrap('exit 3', { ...ctx(false), taskName: 'go-test', stepName: 'test' });
+    expect(out).not.toContain('__tek_rc');
+  });
 });
 
 describe('Bash extends Sh', () => {
