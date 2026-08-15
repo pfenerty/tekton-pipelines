@@ -1,6 +1,7 @@
 import { App, ApiObject, Chart } from 'cdk8s';
 import { Pipeline } from './pipeline';
 import { TaskLike, TaskDef } from './task';
+import type { ImagePullPolicy } from './task';
 import { Workspace } from './workspace';
 import { triggerAnnotations } from './pac-trigger';
 import { TEKTON_API_V1, PAC_API, DEFAULT_POD_SECURITY_CONTEXT } from '../constants';
@@ -119,6 +120,19 @@ export interface TektonicProjectOptions {
    */
   defaultStepSecurityContext?: Record<string, unknown>;
   /**
+   * Image pull policy written into every task's `stepTemplate`, covering the injected
+   * cache and reporter steps as well as the user's own. A task's `stepTemplate` or an
+   * individual step's `imagePullPolicy` overrides it.
+   *
+   * Set `'Always'` when steps reference images by mutable tag: the kubelet defaults to
+   * `IfNotPresent` for every tag but `:latest`, so a republished tag is served from the
+   * node's image cache indefinitely, with no signal.
+   *
+   * Tekton applies `stepTemplate` to steps only — sidecars need their own
+   * `imagePullPolicy` on `TaskSidecarSpec`.
+   */
+  defaultImagePullPolicy?: ImagePullPolicy;
+  /**
    * Default scripting language for steps whose `script` is a bare body (a
    * `{ language, body }` object or a raw string without a shebang). Individual
    * tasks override via their own `defaultLanguage`; tagged bodies always win.
@@ -213,7 +227,14 @@ export class TektonicProject {
     for (const [name, task] of uniqueTasks) {
       if (!(task instanceof TaskDef)) continue;
       const chart = new Chart(taskApp, name);
-      task.synth(chart, namespace, prefix || undefined, opts.defaultStepSecurityContext, opts.defaultLanguage);
+      task.synth(
+        chart,
+        namespace,
+        prefix || undefined,
+        opts.defaultStepSecurityContext,
+        opts.defaultLanguage,
+        opts.defaultImagePullPolicy,
+      );
     }
     taskApp.synth();
 

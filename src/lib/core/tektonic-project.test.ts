@@ -181,6 +181,27 @@ describe('TektonicProject', () => {
     expect(param?.value).toBe('{{ source_branch }}');
   });
 
+  it('threads defaultImagePullPolicy into every synthesized task stepTemplate', () => {
+    const pipeline = new GitPipeline({
+      name: 'push',
+      trigger: { rules: [{ on: TRIGGER_EVENTS.PUSH }] },
+      tasks: [buildTask, testTask],
+    });
+    new TektonicProject({
+      namespace: 'ci',
+      pipelines: [pipeline],
+      defaultImagePullPolicy: 'Always',
+    });
+
+    const tasks = capturedCharts
+      .flatMap((c: any) => c.toJson())
+      .filter((o: any) => o.kind === 'Task');
+    expect(tasks.length).toBeGreaterThan(0);
+    for (const t of tasks) {
+      expect(t.spec.stepTemplate.imagePullPolicy).toBe('Always');
+    }
+  });
+
   it('merges pipelineRunAnnotations into the PipelineRun metadata alongside PAC annotations', () => {
     const pipeline = new GitPipeline({
       name: 'push',
