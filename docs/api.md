@@ -71,6 +71,7 @@ All steps inherit a secure-by-default `stepTemplate` that drops all capabilities
 |----------|------|---------|-------------|
 | `name` | `string` | *required* | Step name (unique within task) |
 | `image` | `string` | *required* | Container image |
+| `imagePullPolicy` | `'Always' \| 'IfNotPresent' \| 'Never'` | kubelet default | Per-step pull policy. Overrides the task's `stepTemplate` and the project's `defaultImagePullPolicy`. Set `'Always'` for images referenced by mutable tag — the kubelet defaults to `IfNotPresent` for every tag but `:latest`. |
 | `command` | `string[]` | — | Entrypoint override |
 | `args` | `string[]` | — | Arguments to entrypoint |
 | `script` | `string` | — | Inline script |

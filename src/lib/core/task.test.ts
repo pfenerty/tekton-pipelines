@@ -178,6 +178,69 @@ describe('Task', () => {
       expect(manifest.spec.stepTemplate.securityContext.fsGroup).toBeUndefined();
     });
 
+    it('writes the project default imagePullPolicy into stepTemplate', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({ name: 'pull', steps: [{ name: 's', image: 'alpine' }] });
+      t.synth(chart, 'ns', undefined, undefined, undefined, 'Always');
+      const manifest = chart.toJson()[0];
+      expect(manifest.spec.stepTemplate.imagePullPolicy).toBe('Always');
+    });
+
+    it('omits imagePullPolicy entirely when no default is set', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({ name: 'bare', steps: [{ name: 's', image: 'alpine' }] });
+      t.synth(chart, 'ns');
+      const manifest = chart.toJson()[0];
+      expect(manifest.spec.stepTemplate.imagePullPolicy).toBeUndefined();
+      expect(manifest.spec.steps[0].imagePullPolicy).toBeUndefined();
+    });
+
+    it('task stepTemplate.imagePullPolicy overrides the project default', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({
+        name: 'pinned',
+        steps: [{ name: 's', image: 'alpine@sha256:abc' }],
+        stepTemplate: { imagePullPolicy: 'IfNotPresent' },
+      });
+      t.synth(chart, 'ns', undefined, undefined, undefined, 'Always');
+      const manifest = chart.toJson()[0];
+      expect(manifest.spec.stepTemplate.imagePullPolicy).toBe('IfNotPresent');
+    });
+
+    it('per-step imagePullPolicy appears in the synthesized step spec', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({
+        name: 'step-pull',
+        steps: [
+          { name: 'pinned', image: 'alpine@sha256:abc', imagePullPolicy: 'IfNotPresent' },
+          { name: 'normal', image: 'alpine' },
+        ],
+      });
+      t.synth(chart, 'ns', undefined, undefined, undefined, 'Always');
+      const manifest = chart.toJson()[0];
+      expect(manifest.spec.steps[0].imagePullPolicy).toBe('IfNotPresent');
+      expect(manifest.spec.steps[1].imagePullPolicy).toBeUndefined();
+      expect(manifest.spec.stepTemplate.imagePullPolicy).toBe('Always');
+    });
+
+    it('per-sidecar imagePullPolicy appears in the synthesized sidecar spec', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      const t = new Task({
+        name: 'sidecar-pull',
+        steps: [{ name: 's', image: 'alpine' }],
+        sidecars: [{ name: 'db', image: 'postgres:15-alpine', imagePullPolicy: 'Always' }],
+      });
+      // Tekton applies stepTemplate to steps only, so the sidecar carries its own policy.
+      t.synth(chart, 'ns');
+      const manifest = chart.toJson()[0];
+      expect(manifest.spec.sidecars[0].imagePullPolicy).toBe('Always');
+    });
+
     it('applies namePrefix', () => {
       const app = new App();
       const chart = new Chart(app, 'test');

@@ -136,6 +136,7 @@ const task = new Task({
         { name: 'TOKEN', valueFrom: { secretKeyRef: { name: 'my-secret', key: 'token' } } },
       ],
       onError: 'continue',       // 'continue' or 'stopAndFail' (default)
+      imagePullPolicy: 'Always', // overrides stepTemplate / defaultImagePullPolicy
       computeResources: {
         requests: { cpu: '500m', memory: '1Gi' },
         limits: { memory: '2Gi' },
@@ -230,6 +231,13 @@ new TektonicProject({
   // Security context overrides
   defaultPodSecurityContext: { fsGroup: 1000 },
   defaultStepSecurityContext: { runAsUser: 1000 },
+
+  // Pull policy for every task's stepTemplate. Set 'Always' when steps reference images
+  // by mutable tag: the kubelet defaults to IfNotPresent for every tag but ':latest', so
+  // a republished tag is served from the node's image cache indefinitely, with no signal.
+  // Covers the injected cache/reporter steps too — but not sidecars, which Tekton
+  // excludes from stepTemplate and which carry their own `imagePullPolicy`.
+  defaultImagePullPolicy: 'Always',
 });
 ```
 
@@ -623,6 +631,7 @@ const dbTest = new Task({
 |-------|------|-------------|
 | `name` | `string` | Sidecar name (unique within the task) |
 | `image` | `string` | Container image |
+| `imagePullPolicy?` | `'Always' \| 'IfNotPresent' \| 'Never'` | Pull policy. Tekton applies `stepTemplate` to steps only, so the project's `defaultImagePullPolicy` does **not** reach sidecars — set it here |
 | `command?` | `string[]` | Entrypoint override |
 | `args?` | `string[]` | Arguments |
 | `script?` | `string` | Inline script |

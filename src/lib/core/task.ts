@@ -18,12 +18,28 @@ import type { CacheBackend, BackendCtx } from "./cache-backend";
 import { renderScript, EXIT_CODE_PATH } from "../script";
 import type { ScriptInput, LanguageName, ScriptCtx } from "../script";
 
+/**
+ * Kubernetes image pull policy.
+ *
+ * The kubelet defaults to `IfNotPresent` for every tag except `:latest`, so a mutable
+ * tag (a moving `:stable`, or a version tag republished by a rebuild) is served from the
+ * node's image cache indefinitely once pulled. Set `Always` on steps whose images are
+ * referenced by tag rather than digest.
+ */
+export type ImagePullPolicy = "Always" | "IfNotPresent" | "Never";
+
 /** Specification for a single step within a Tekton Task. */
 export interface TaskStepSpec {
     /** Step name (must be unique within the task). */
     name: string;
     /** Container image to run for this step. */
     image: string;
+    /**
+     * Pull policy for this step's image. Overrides the task's `stepTemplate` and the
+     * project's `defaultImagePullPolicy`. Omitted from the manifest when unset, leaving
+     * the kubelet default in place.
+     */
+    imagePullPolicy?: ImagePullPolicy;
     /** Entrypoint command override. */
     command?: string[];
     /** Arguments passed to the entrypoint. */
@@ -183,6 +199,12 @@ export interface TaskSidecarSpec {
     name: string;
     /** Container image to run. */
     image: string;
+    /**
+     * Pull policy for this sidecar's image. Tekton applies `stepTemplate` to steps only,
+     * so a project-level `defaultImagePullPolicy` does **not** reach sidecars — set it
+     * here explicitly.
+     */
+    imagePullPolicy?: ImagePullPolicy;
     /** Entrypoint command override. */
     command?: string[];
     /** Arguments passed to the entrypoint. */
@@ -434,6 +456,11 @@ export class TaskDef implements TaskLike {
      *   any) takes precedence over this via the spread in stepTemplate.
      * @param projectDefaultLanguage - Project-level default scripting language, used for
      *   bare-body steps when the task does not set its own `defaultLanguage`.
+     * @param defaultImagePullPolicy - Project-level pull policy written into this task's
+     *   `stepTemplate`, so it also covers the injected cache and reporter steps. The task's
+     *   own `stepTemplate.imagePullPolicy` (if any) takes precedence via the spread in
+     *   stepTemplate; a step's own `imagePullPolicy` takes precedence over both. Tekton
+     *   applies `stepTemplate` to steps only — sidecars must set their own.
      */
     synth(
         scope: Construct,
@@ -441,6 +468,7 @@ export class TaskDef implements TaskLike {
         namePrefix?: string,
         stepSecurityContext?: Record<string, unknown>,
         projectDefaultLanguage?: LanguageName,
+        defaultImagePullPolicy?: ImagePullPolicy,
     ): void {
         const resourceName = namePrefix
             ? `${namePrefix}-${this.name}`
@@ -517,6 +545,7 @@ export class TaskDef implements TaskLike {
                 stepTemplate: {
                     securityContext: baseStepSecContext,
                     computeResources: DEFAULT_STEP_RESOURCES,
+                    ...(defaultImagePullPolicy && { imagePullPolicy: defaultImagePullPolicy }),
                     ...(this.stepTemplate ?? {}),
                 },
                 ...(this.params.length > 0 && {
