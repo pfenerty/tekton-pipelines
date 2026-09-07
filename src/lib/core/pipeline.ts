@@ -7,16 +7,8 @@ import { Task, TaskLike, TaskDef } from './task';
 import { TRIGGER_EVENTS } from './trigger-events';
 import { triggerEvents } from './pac-trigger';
 import type { PipelineTrigger } from './pac-trigger';
-import type { PipelineTaskNode } from './pipeline-task';
-
-/**
- * The `when` that will actually gate `task` in a pipeline: a `gated()` wrapper's override
- * replaces the task's own `when` for that pipeline edge, so it takes precedence when present.
- */
-function effectiveWhen(task: TaskDef): TaskDef['when'] {
-  const overrides = (task as unknown as Partial<PipelineTaskNode>)._overrides;
-  return overrides?.when !== undefined ? overrides.when : task.when;
-}
+import { applyOverrides, unwrapGated, GatedTask } from './pipeline-task';
+import type { PipelineTaskOverrides } from './pipeline-task';
 
 /** Options for constructing a {@link Pipeline}. */
 export interface PipelineOptions {
@@ -66,6 +58,12 @@ export class Pipeline {
   /** Overall PipelineRun timeout (Go duration), emitted by TektonicProject. Unset = Tekton default. */
   readonly timeout?: string;
   private readonly extraParams: Param[];
+  /**
+   * Per-edge overrides contributed by `gated()` markers, keyed by the *unwrapped* task.
+   * Markers are unwrapped before discovery so identity dedupes to one graph node; the
+   * overrides they carried are applied here at spec-build time instead.
+   */
+  private readonly taskOverrides = new Map<TaskLike, PipelineTaskOverrides>();
   /** @internal Auto-generated task that sets all status contexts to pending at pipeline start. */
   protected readonly _pendingTask?: TaskDef;
 
@@ -81,12 +79,12 @@ export class Pipeline {
     } else {
       this.name = `pipeline-${Pipeline._counter++}`;
     }
-    this.tasks = opts.tasks;
-    this.finallyTasks = opts.finallyTasks ?? [];
+    this.tasks = opts.tasks.map(t => this.registerOverrides(t));
+    this.finallyTasks = (opts.finallyTasks ?? []).map(t => this.registerOverrides(t));
     this.timeout = opts.timeout;
     this.extraParams = opts.params ?? [];
 
-    const regularTasks = this.discoverAllTasks(opts.tasks);
+    const regularTasks = this.discoverAllTasks(this.tasks);
     const statusTasks = regularTasks.filter(
       (t): t is TaskDef => t instanceof TaskDef && !!t.statusContext && !!t.statusReporter,
     );
@@ -100,7 +98,7 @@ export class Pipeline {
       // Tasks gated by `when` may be skipped by Tekton entirely, so their own report-status
       // step (the task's last step) never runs and their context is stuck on "pending" from
       // the task above. Resolve those in a `finally` task that runs after the whole DAG.
-      const gatedStatusTasks = statusTasks.filter(t => effectiveWhen(t) !== undefined);
+      const gatedStatusTasks = statusTasks.filter(t => this.effectiveWhen(t) !== undefined);
       if (gatedStatusTasks.length > 0 && reporter.createSkipResolverTask) {
         const entries = gatedStatusTasks.map(t => ({ taskName: t.name, context: t.statusContext! }));
         const skipResolverTask = reporter.createSkipResolverTask(entries, `resolve-skipped-status-${this.name}`);
@@ -121,13 +119,49 @@ export class Pipeline {
 
   protected discoverAllTasks(tasks: TaskLike[]): TaskLike[] {
     const seen = new Set<TaskLike>();
-    const visit = (t: TaskLike) => {
+    const visit = (node: TaskLike) => {
+      const t = this.registerOverrides(node);
       if (seen.has(t)) return;
       seen.add(t);
       for (const dep of t.needs) visit(dep);
     };
     for (const t of tasks) visit(t);
     return [...seen];
+  }
+
+  /**
+   * Records a `gated()` marker's overrides against the task it wraps and returns that task,
+   * so the graph only ever holds unwrapped tasks and identity comparisons hold. Non-markers
+   * pass through unchanged. Gating the same task twice in one pipeline is ambiguous, so it
+   * throws rather than silently picking one set of overrides.
+   */
+  private registerOverrides(node: TaskLike): TaskLike {
+    if (!(node instanceof GatedTask)) return node;
+    const task = node.task;
+    const existing = this.taskOverrides.get(task);
+    if (existing && existing !== node._overrides) {
+      throw new Error(
+        `Pipeline '${this.name}': task '${task.name}' is gated more than once with different overrides`,
+      );
+    }
+    this.taskOverrides.set(task, node._overrides);
+    return task;
+  }
+
+  /**
+   * The `when` that will actually gate `task` in this pipeline: a `gated()` wrapper's override
+   * replaces the task's own `when` for that pipeline edge, so it takes precedence when present.
+   */
+  protected effectiveWhen(task: TaskDef): TaskDef['when'] {
+    const overrides = this.taskOverrides.get(task);
+    return overrides?.when !== undefined ? overrides.when : task.when;
+  }
+
+  /** @internal Emits one pipeline task entry, applying any `gated()` overrides for that task. */
+  private toPipelineTaskSpec(task: TaskLike, runAfter: string[], namePrefix?: string): Record<string, unknown> {
+    const spec = task._toPipelineTaskSpec(runAfter, namePrefix);
+    const overrides = this.taskOverrides.get(task);
+    return overrides ? applyOverrides(spec, overrides) : spec;
   }
 
   /** Returns the de-duplicated union of all task params plus any extra pipeline-level params. */
@@ -173,11 +207,11 @@ export class Pipeline {
       params: this.deduplicateParams([...(extraParams ?? []), ...this.inferParams()]),
       workspaces: this.inferWorkspaces(),
       tasks: sorted.map(task =>
-        task._toPipelineTaskSpec(this.runAfterFor(task), namePrefix),
+        this.toPipelineTaskSpec(task, this.runAfterFor(task), namePrefix),
       ),
       ...(this.finallyTasks.length > 0 && {
         finally: this.finallyTasks.map(task =>
-          task._toPipelineTaskSpec([], namePrefix),
+          this.toPipelineTaskSpec(task, [], namePrefix),
         ),
       }),
     };
@@ -212,6 +246,7 @@ export class Pipeline {
    */
   protected runAfterFor(task: TaskLike): string[] {
     let names = task.needs
+      .map(unwrapGated)
       .filter(dep => this.allTasks.includes(dep))
       .map(dep => dep.name);
     if (this._pendingTask && task instanceof TaskDef && task.statusContext && task.statusReporter && task !== this._pendingTask) {
@@ -242,7 +277,7 @@ export class Pipeline {
       }
       nameSet.add(task.name);
 
-      for (const dep of task.needs) {
+      for (const dep of task.needs.map(unwrapGated)) {
         if (!taskSet.has(dep)) {
           throw new Error(
             `Pipeline '${this.name}': task '${task.name}' depends on '${dep.name}' which is not in the pipeline`,
@@ -265,7 +300,7 @@ export class Pipeline {
         );
       }
       visiting.add(task);
-      for (const dep of task.needs) {
+      for (const dep of task.needs.map(unwrapGated)) {
         visit(dep);
       }
       visiting.delete(task);

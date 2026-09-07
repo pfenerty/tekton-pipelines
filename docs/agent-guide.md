@@ -577,6 +577,11 @@ const pipeline = new Pipeline({
 
 Overrides are applied at pipeline-spec time only — the underlying `Task` manifest is unchanged.
 
+A gated task keeps its identity in the graph, so tasks that other tasks depend on can be gated
+too: the pipeline emits one entry for it, carrying the overrides, with its `runAfter` edges in
+both directions intact. Gating the same task twice in one pipeline with different overrides is
+an error.
+
 **PipelineTaskOverrides:**
 
 | Field | Type | Description |

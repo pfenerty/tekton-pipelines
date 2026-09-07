@@ -3,6 +3,7 @@ import { Workspace } from "./workspace";
 import { Task, TaskLike } from "./task";
 import { Result } from "./result";
 import { Pipeline, PipelineOptions } from "./pipeline";
+import { unwrapGated } from "./pipeline-task";
 import { DEFAULT_BASE_IMAGE } from "../constants";
 import { sh } from "../script";
 
@@ -194,7 +195,10 @@ export class GitPipeline extends Pipeline {
 
     private static _discoverUserTasks(tasks: TaskLike[]): TaskLike[] {
         const seen = new Set<TaskLike>();
-        const visit = (t: TaskLike): void => {
+        const visit = (node: TaskLike): void => {
+            // Unwrap `gated()` markers so the workspace/workingDir injection below lands on
+            // the real task rather than on a per-edge wrapper.
+            const t = unwrapGated(node);
             if (seen.has(t)) return;
             seen.add(t);
             for (const dep of t.needs) visit(dep);

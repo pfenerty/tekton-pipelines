@@ -1,5 +1,8 @@
 import type { TaskLike } from './task';
-import { Condition, normalizeWhen } from './condition';
+import type { Param } from './param';
+import type { Workspace } from './workspace';
+import { normalizeWhen } from './condition';
+import type { Condition } from './condition';
 import type { WhenClause } from './condition';
 
 /** A conditional expression controlling whether a pipeline task runs. */
@@ -44,9 +47,75 @@ export interface PipelineTaskOverrides {
   matrix?: MatrixSpec;
 }
 
-/** A {@link TaskLike} node that carries per-pipeline-edge overrides applied at synthesis time. */
+/**
+ * A {@link TaskLike} node that carries per-pipeline-edge overrides applied at synthesis time.
+ * Implemented by {@link GatedTask}.
+ */
 export interface PipelineTaskNode extends TaskLike {
   readonly _overrides: PipelineTaskOverrides;
+}
+
+/**
+ * @internal Applies per-edge overrides onto an already-built pipeline task spec.
+ * Shared by {@link GatedTask._toPipelineTaskSpec} and `Pipeline._buildSpec`, which
+ * applies overrides itself because it emits specs from the unwrapped task.
+ */
+export function applyOverrides(
+  spec: Record<string, unknown>,
+  overrides: PipelineTaskOverrides,
+): Record<string, unknown> {
+  if (overrides.when) {
+    const when = normalizeWhen(overrides.when);
+    if (when.length) spec.when = when;
+    else delete spec.when;
+  }
+  if (overrides.retries !== undefined) spec.retries = overrides.retries;
+  if (overrides.timeout !== undefined) spec.timeout = overrides.timeout;
+  if (overrides.matrix) {
+    const names = new Set(overrides.matrix.params.map(p => p.name));
+    if (Array.isArray(spec.params)) {
+      spec.params = (spec.params as { name: string }[]).filter(p => !names.has(p.name));
+      if ((spec.params as unknown[]).length === 0) delete spec.params;
+    }
+    spec.matrix = overrides.matrix;
+  }
+  return spec;
+}
+
+/**
+ * A gating marker produced by {@link gated}: the wrapped task plus the overrides that
+ * apply to it on this pipeline edge.
+ *
+ * It delegates every {@link TaskLike} member to the wrapped task, but is a *distinct*
+ * object from it. A `Pipeline` therefore unwraps markers with {@link unwrapGated} before
+ * graph discovery, so a task that is both gated in `tasks` and depended on via another
+ * task's `needs` dedupes to a single node — the reason this is a plain wrapper and not
+ * a `Proxy`, which is indistinguishable from its target at the call site but not by
+ * identity, and so produced duplicate task names and dropped `runAfter` edges.
+ */
+export class GatedTask implements PipelineTaskNode {
+  constructor(
+    /** The wrapped task this marker gates. */
+    readonly task: TaskLike,
+    /** Overrides applied to the wrapped task on this pipeline edge. */
+    readonly _overrides: PipelineTaskOverrides,
+  ) {}
+
+  get name(): string { return this.task.name; }
+  get synthesizable(): boolean { return this.task.synthesizable; }
+  get needs(): TaskLike[] { return this.task.needs; }
+  get params(): Param[] { return this.task.params; }
+  get workspaces(): Workspace[] { return this.task.workspaces; }
+
+  /** @internal Emits the wrapped task's spec with this marker's overrides applied. */
+  _toPipelineTaskSpec(runAfterNames: string[], namePrefix?: string): Record<string, unknown> {
+    return applyOverrides(this.task._toPipelineTaskSpec(runAfterNames, namePrefix), this._overrides);
+  }
+}
+
+/** Returns the task a {@link GatedTask} wraps, or `task` itself when it is not gated. */
+export function unwrapGated(task: TaskLike): TaskLike {
+  return task instanceof GatedTask ? task.task : task;
 }
 
 /**
@@ -55,6 +124,9 @@ export interface PipelineTaskNode extends TaskLike {
  * The same task can appear conditionally in one pipeline and unconditionally in
  * another by passing different `gated()` wrappers to each. Overrides are only
  * applied to the pipeline task spec — the underlying Task manifest is unchanged.
+ *
+ * Task identity is preserved: gating a task that other tasks depend on emits a
+ * single pipeline entry carrying the overrides, with all `runAfter` edges intact.
  *
  * @example
  * ```ts
@@ -71,31 +143,6 @@ export interface PipelineTaskNode extends TaskLike {
  * });
  * ```
  */
-export function gated(task: TaskLike, overrides: PipelineTaskOverrides): PipelineTaskNode {
-  return new Proxy(task as PipelineTaskNode, {
-    get(target, prop) {
-      if (prop === '_overrides') return overrides;
-      if (prop === '_toPipelineTaskSpec') {
-        return (runAfter: string[], prefix?: string) => {
-          const base = target._toPipelineTaskSpec(runAfter, prefix);
-          if (overrides.when) {
-            const when = normalizeWhen(overrides.when);
-            if (when.length) base.when = when;
-          }
-          if (overrides.retries !== undefined) base.retries = overrides.retries;
-          if (overrides.timeout !== undefined) base.timeout = overrides.timeout;
-          if (overrides.matrix) {
-            const names = new Set(overrides.matrix.params.map(p => p.name));
-            if (Array.isArray(base.params)) {
-              base.params = (base.params as { name: string }[]).filter(p => !names.has(p.name));
-              if ((base.params as unknown[]).length === 0) delete base.params;
-            }
-            base.matrix = overrides.matrix;
-          }
-          return base;
-        };
-      }
-      return Reflect.get(target, prop);
-    },
-  });
+export function gated(task: TaskLike, overrides: PipelineTaskOverrides): GatedTask {
+  return new GatedTask(task, overrides);
 }

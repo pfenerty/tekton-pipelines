@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { App, Chart } from 'cdk8s';
 import { Pipeline } from './pipeline';
 import { Task } from './task';
-import { gated } from './pipeline-task';
+import { gated, unwrapGated } from './pipeline-task';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyObj = Record<string, any>;
@@ -121,5 +121,75 @@ describe('gated()', () => {
     expect(buildEntry?.when).toEqual(whenExpr);
     expect(buildEntry?.retries).toBe(2);
     expect(buildEntry?.timeout).toBe('1h');
+  });
+});
+
+describe('gated() identity', () => {
+  // The shape that broke before: a task other tasks depend on (goTest ← goIntegration)
+  // is gated in one pipeline and ungated in another.
+  const mkGraph = () => {
+    const clone = new Task({ name: 'clone', steps: [{ name: 'clone', image: 'git' }] });
+    const test = new Task({ name: 'test', needs: [clone], steps: [{ name: 'test', image: 'go' }] });
+    const integration = new Task({ name: 'integration', needs: [test], steps: [{ name: 'it', image: 'go' }] });
+    return { clone, test, integration };
+  };
+
+  const specOf = (pipeline: Pipeline) => {
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    return (chart.toJson()[0] as AnyObj).spec;
+  };
+
+  const goWhen = [{ input: '$(params.changed)', operator: 'in' as const, values: ['go'] }];
+
+  it('emits one entry for a depended-on task that is gated', () => {
+    const { clone, test, integration } = mkGraph();
+    const pipeline = new Pipeline({ name: 'ci', tasks: [clone, gated(test, { when: goWhen }), integration] });
+    const entries = (specOf(pipeline).tasks as AnyObj[]).filter(t => t.name === 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].when).toEqual(goWhen);
+  });
+
+  it('keeps runAfter edges into and out of a gated non-leaf task', () => {
+    const { clone, test, integration } = mkGraph();
+    const pipeline = new Pipeline({ name: 'ci', tasks: [clone, gated(test, { when: goWhen }), integration] });
+    const tasks = specOf(pipeline).tasks as AnyObj[];
+    expect(tasks.find(t => t.name === 'test')?.runAfter).toEqual(['clone']);
+    expect(tasks.find(t => t.name === 'integration')?.runAfter).toEqual(['test']);
+  });
+
+  it('discovers a gated task reached only through another task needs', () => {
+    const { clone, test, integration } = mkGraph();
+    // `test` is not listed at the top level — it is reached via integration.needs — but the
+    // marker in `tasks` still contributes its overrides.
+    const pipeline = new Pipeline({ name: 'ci', tasks: [clone, integration, gated(test, { retries: 2 })] });
+    const entries = (specOf(pipeline).tasks as AnyObj[]).filter(t => t.name === 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].retries).toBe(2);
+  });
+
+  it('gates the same task in one pipeline and not in another', () => {
+    const { clone, test, integration } = mkGraph();
+    const gatedPipeline = new Pipeline({ name: 'pr', tasks: [clone, gated(test, { when: goWhen }), integration] });
+    const plainPipeline = new Pipeline({ name: 'push', tasks: [clone, test, integration] });
+    const gatedEntry = (specOf(gatedPipeline).tasks as AnyObj[]).find(t => t.name === 'test');
+    const plainEntry = (specOf(plainPipeline).tasks as AnyObj[]).find(t => t.name === 'test');
+    expect(gatedEntry?.when).toEqual(goWhen);
+    expect(plainEntry?.when).toBeUndefined();
+  });
+
+  it('rejects the same task gated twice with different overrides', () => {
+    const { clone, test } = mkGraph();
+    expect(
+      () => new Pipeline({ name: 'ci', tasks: [clone, gated(test, { retries: 1 }), gated(test, { retries: 2 })] }),
+    ).toThrow(/gated more than once/);
+  });
+
+  it('unwrapGated returns the wrapped task', () => {
+    const { test } = mkGraph();
+    const marker = gated(test, { retries: 1 });
+    expect(unwrapGated(marker)).toBe(test);
+    expect(unwrapGated(test)).toBe(test);
   });
 });
