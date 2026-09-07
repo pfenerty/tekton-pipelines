@@ -1203,7 +1203,11 @@ describe('Task', () => {
       const restore = chart.toJson()[0].spec.steps.find((s: any) => s.name === 'restore-go-cache');
       expect(restore.script).toContain('"api/vendor"');
       expect(restore.script).toContain('"api/go.sum"');
-      expect(restore.script).toContain('rm -rf $p');
+      // Extraction goes through a staging dir and the path is swapped in, never deleted
+      // in place — a concurrent task on the same workspace may be reading it.
+      expect(restore.script).toContain('tar xf - -C $stage');
+      expect(restore.script).toContain('mv $staged $p');
+      expect(restore.script).not.toContain('rm -rf $p');
     });
 
     it('save script handles subdirectory paths', () => {

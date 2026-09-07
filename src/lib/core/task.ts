@@ -368,6 +368,12 @@ export class TaskDef implements TaskLike {
     readonly statusReporter?: StatusReporter;
     /** Cache declarations — restore/save steps are injected at synthesis time. */
     readonly caches: TaskCacheSpec[];
+    /**
+     * Names of caches whose paths land in a workspace this task shares with others, as
+     * detected by {@link Pipeline}. Restore for these defaults to `skipRestoreIfPathsExist`
+     * so a warm tree another task populated is not swapped out from under it.
+     */
+    private readonly _sharedWorkspaceCaches = new Set<string>();
     /** Results this task produces, bound to this task's name at construction time. */
     readonly results: Result[];
     /** Sidecar containers that run alongside steps for the task pod's lifetime. */
@@ -479,7 +485,11 @@ export class TaskDef implements TaskLike {
         };
         const ctx: BackendCtx = { defaultBaseImage: DEFAULT_BASE_IMAGE, defaultGcsCacheImage: DEFAULT_GCS_CACHE_IMAGE };
         const restoreSteps = this.caches.map((c) =>
-            (c.backend ?? new PvcBackend()).restoreStep(c, this.name, ctx),
+            (c.backend ?? new PvcBackend()).restoreStep(
+                this._effectiveCacheSpec(c),
+                this.name,
+                ctx,
+            ),
         );
         const saveSteps = this.caches
             .filter((c) => c.saveStrategy !== "finally")
@@ -591,6 +601,26 @@ export class TaskDef implements TaskLike {
                     stepTemplate: this.stepTemplate,
                 });
             });
+    }
+
+    /**
+     * @internal Marks a cache as living on a workspace shared with other tasks in a pipeline.
+     * Called by {@link Pipeline} at construction; the flag only widens the default, so a task
+     * shared between pipelines keeps the safest behaviour.
+     */
+    _markSharedWorkspaceCache(cacheName: string): void {
+        this._sharedWorkspaceCaches.add(cacheName);
+    }
+
+    /**
+     * The cache spec as synthesized: an explicit `skipRestoreIfPathsExist` always wins, and
+     * a cache flagged by {@link _markSharedWorkspaceCache} defaults to skipping restore over
+     * existing paths.
+     */
+    private _effectiveCacheSpec(c: TaskCacheSpec): TaskCacheSpec {
+        if (c.skipRestoreIfPathsExist !== undefined) return c;
+        if (!this._sharedWorkspaceCaches.has(c.name)) return c;
+        return { ...c, skipRestoreIfPathsExist: true };
     }
 
     /** @internal Generates the pipeline task spec used inside a Pipeline resource. */

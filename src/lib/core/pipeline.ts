@@ -11,6 +11,15 @@ import { Condition } from './condition';
 import { applyOverrides, unwrapGated, GatedTask } from './pipeline-task';
 import type { PipelineTaskOverrides } from './pipeline-task';
 
+/**
+ * The workspace name a `$(workspaces.<name>.path)`-rooted working directory refers to,
+ * or `undefined` when the directory is absent or not workspace-relative.
+ */
+function workspaceOfPath(workingDir: unknown): string | undefined {
+  if (typeof workingDir !== 'string') return undefined;
+  return /^\$\(workspaces\.([^.)]+)\.path\)/.exec(workingDir)?.[1];
+}
+
 /** Options for constructing a {@link Pipeline}. */
 export interface PipelineOptions {
   /**
@@ -117,12 +126,46 @@ export class Pipeline {
       this.allTasks = regularTasks;
     }
 
+    this.flagSharedWorkspaceCaches(regularTasks);
+
     // Collect cache-save finally tasks from TaskDef nodes only.
     const cacheFinallyTasks = regularTasks
       .filter((t): t is TaskDef => t instanceof TaskDef)
       .flatMap(t => t.getCacheFinallyTasks());
     if (cacheFinallyTasks.length > 0) {
       (this.finallyTasks as TaskLike[]).push(...cacheFinallyTasks);
+    }
+  }
+
+  /**
+   * Flags caches whose restore would write into a workspace that more than one task in this
+   * pipeline mounts. Tekton runs independent tasks concurrently, so a restore there lands on
+   * a tree another task is actively using — the case that used to be a `rm -rf` of live files
+   * and is now an atomic swap, but a swap that still discards work the other task just did.
+   * Such caches default to `skipRestoreIfPathsExist`; an explicit setting always wins.
+   */
+  private flagSharedWorkspaceCaches(tasks: TaskLike[]): void {
+    const mountCount = new Map<string, number>();
+    for (const t of tasks) {
+      for (const w of new Set(t.workspaces.map(w => w.name))) {
+        mountCount.set(w, (mountCount.get(w) ?? 0) + 1);
+      }
+    }
+    for (const task of tasks) {
+      if (!(task instanceof TaskDef)) continue;
+      for (const cache of task.caches) {
+        if (cache.skipRestoreIfPathsExist !== undefined) continue;
+        const target = workspaceOfPath(cache.workingDir ?? task.stepTemplate?.workingDir);
+        if (!target || (mountCount.get(target) ?? 0) < 2) continue;
+        task._markSharedWorkspaceCache(cache.name);
+        // eslint-disable-next-line no-console
+        console.warn(
+          `tektonic [${this.name}/${task.name}]: cache '${cache.name}' restores into workspace ` +
+            `'${target}', which ${mountCount.get(target)} tasks in this pipeline mount — ` +
+            `defaulting to skipRestoreIfPathsExist so a concurrent task's warm tree is kept. ` +
+            `Set skipRestoreIfPathsExist explicitly to silence this.`,
+        );
+      }
     }
   }
 

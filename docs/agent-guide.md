@@ -314,7 +314,23 @@ caches: [{ workspace: npmCache, storageSize: '5Gi' }]
 | `forceSave` | `false` | Always save even if archive exists (use for tool-managed DBs like grype) |
 | `saveStrategy` | `'step'` | `'finally'` runs save in a separate pod after the build pod exits |
 | `workingDir` | — | Paths are relative to this dir |
+| `skipRestoreIfPathsExist` | see below | Skip restore when the paths are already populated |
 
+### Caches on a shared workspace
+
+Language caches are usually pointed at directories inside the **source** workspace
+(`GOMODCACHE`, `GOCACHE`, `node_modules`, …). Tekton runs independent tasks concurrently, so
+those directories can be live for another task while this one restores into them.
+
+Restore therefore never writes over a path in place: the archive is extracted into a staging
+directory and each path is swapped in with a rename, so a concurrent reader sees either the old
+tree or the new one — never a half-deleted one.
+
+On top of that, a cache whose `workingDir` resolves inside a workspace that more than one task
+in the pipeline mounts defaults to `skipRestoreIfPathsExist: true`, with a warning naming the
+task and workspace: a swap is atomic, but it still replaces a warm tree the other task just
+populated. Set `skipRestoreIfPathsExist` explicitly (either value) to take that decision back
+and silence the warning.
 ## GitHub Status Reporting
 
 ```typescript

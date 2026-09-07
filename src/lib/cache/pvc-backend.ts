@@ -5,6 +5,7 @@ import {
     threadFlag,
     hashExpr,
     cacheScript,
+    stagedExtract,
     COMPRESSED_CACHE_LANGUAGE,
     PORTABLE_CACHE_LANGUAGE,
 } from "./shared";
@@ -59,6 +60,15 @@ export class PvcBackend implements CacheBackend {
         if (c.compress) {
             const expr = hashExpr(c);
             const pathList = c.paths.map((p) => `"${p}"`).join(", ");
+            // Indented to sit inside the `if ($archive | path exists)` block.
+            const stagedExtractBody = stagedExtract(
+                c,
+                label,
+                `^zstd -d ${flag} -c $archive | ^tar xf - -C $stage -o --no-same-permissions`,
+            )
+                .split("\n")
+                .map((l) => (l.length > 0 ? `  ${l}` : l))
+                .join("\n");
             const skipGuard = skipIfExists
                 ? `if ([${pathList}] | any { |p| $p | path exists }) {
   log $"${label}: paths already exist, skipping restore ($hash)"
@@ -74,12 +84,8 @@ ${skipGuard}let archive = $"${wsPath}/($hash).tar.zst"
 if ($archive | path exists) {
   let archive_size = (ls $archive | get size.0)
   log $"${label}: hit ($hash) size=($archive_size)"
-  let cache_paths = [${pathList}]
-  for p in $cache_paths {
-    if ($p | path exists) { ^chmod -R u+w $p; rm -rf $p }
-  }
   let t0 = (date now)
-  ^zstd -d ${flag} -c $archive | ^tar xf - -o --no-same-permissions
+${stagedExtractBody}
   let elapsed = (((date now) - $t0) | into int) / 1_000_000_000
   log $"${label}: restored in ($elapsed)s"
 } else {

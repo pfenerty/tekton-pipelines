@@ -44,3 +44,51 @@ export function hashExpr(c: TaskCacheSpec): string {
   | str join | hash sha256 | str substring 0..15
 )`;
 }
+
+/**
+ * Nushell fragment that extracts a cache archive through a staging directory and swaps each
+ * cache path into place.
+ *
+ * Restore used to `rm -rf` every cache path before extracting over it. When the paths live
+ * inside a workspace shared with other tasks — the usual layout for language caches pointed at
+ * the source workspace (`GOMODCACHE`, `node_modules`, …) — that deletes files another task is
+ * reading *right now*, and races its writers (the `rm` itself fails `ENOTEMPTY` while they
+ * create files under it). Extracting into a staging directory and renaming makes the swap
+ * atomic per path: readers see either the old tree or the new one, never a half-deleted one.
+ *
+ * @param c        the cache spec, for its `paths`
+ * @param label    step label used in log lines
+ * @param extract  the extraction pipeline; must write into `$stage` (i.e. `tar xf - -C $stage`)
+ */
+export function stagedExtract(c: TaskCacheSpec, label: string, extract: string): string {
+    const pathList = c.paths.map((p) => `"${p}"`).join(", ");
+    return `let stage = $".cache-restore-(random uuid)"
+mkdir $stage
+try {
+  ${extract}
+} catch { |e|
+  rm -rf $stage
+  log $"${label}: extract failed \\(($e.msg)\\)"
+  exit 1
+}
+for p in [${pathList}] {
+  let staged = ($stage | path join $p)
+  if not ($staged | path exists) { continue }
+  if ($p | path exists) {
+    # Rename the live tree aside and move the new one in — never delete in place. The
+    # displaced tree is removed afterwards and best-effort: a concurrent writer still inside
+    # it can legitimately make that fail, and by then nothing resolves to it by path.
+    let displaced = $"($p).displaced-(random uuid)"
+    mv $p $displaced
+    mv $staged $p
+    try { ^chmod -R u+w $displaced; rm -rf $displaced } catch { |e|
+      log $"${label}: displaced tree ($displaced) not removed: ($e.msg)"
+    }
+  } else {
+    let parent = ($p | path dirname)
+    if (($parent | str length) > 0) and ($parent != ".") { mkdir $parent }
+    mv $staged $p
+  }
+}
+rm -rf $stage`;
+}
