@@ -931,7 +931,8 @@ itself. A non-zero `exit` in a capturing nushell body is rejected for the same r
 ### Contexts left pending: skipped and terminated tasks
 
 A task with a `statusReporter` starts as `pending` (via the pipeline's auto-generated
-`set-status-pending-*` task) and normally resolves to `success`/`failure` via its own last step.
+`set-status-pending-*` task — one per distinct reporter instance, since a reporter can only
+initialise the contexts it owns; the second and later ones are suffixed `-2`, `-3`) and normally resolves to `success`/`failure` via its own last step.
 Anything that stops the task from reaching that step would otherwise leave its context pending
 forever, so `Pipeline` auto-adds a `reconcile-status-*` `finally` task covering **every**
 reporting task in the pipeline. It reads each task's runtime status (`$(tasks.<name>.status)`)

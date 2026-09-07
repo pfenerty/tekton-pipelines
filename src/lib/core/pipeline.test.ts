@@ -379,3 +379,63 @@ describe('Pipeline', () => {
     });
   });
 });
+
+describe('multiple status reporters', () => {
+  const reportingTask = (name: string, reporter: GitHubStatusReporter) =>
+    new Task({ name, statusReporter: reporter, steps: [{ name: 's', image: 'alpine' }] });
+
+  const specOf = (pipeline: Pipeline) => {
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    return chart.toJson()[0].spec;
+  };
+
+  it('emits one pending task per reporter instance', () => {
+    // Two instances of the same class still differ (failOnError here); two different
+    // implementations — GitHub and, say, Slack — would post to different systems entirely.
+    const strict = new GitHubStatusReporter();
+    const reportOnly = new GitHubStatusReporter({ failOnError: false });
+    const spec = specOf(
+      new Pipeline({ name: 'ci', tasks: [reportingTask('build', strict), reportingTask('scan', reportOnly)] }),
+    );
+    const names = (spec.tasks as any[]).map(t => t.name);
+    expect(names).toContain('set-status-pending-ci');
+    expect(names).toContain('set-status-pending-ci-2');
+  });
+
+  it('initialises each context through its own reporter and waits on that pending task', () => {
+    const strict = new GitHubStatusReporter();
+    const reportOnly = new GitHubStatusReporter({ failOnError: false });
+    const spec = specOf(
+      new Pipeline({ name: 'ci', tasks: [reportingTask('build', strict), reportingTask('scan', reportOnly)] }),
+    );
+    const tasks = spec.tasks as any[];
+    expect(tasks.find(t => t.name === 'build').runAfter).toEqual(['set-status-pending-ci']);
+    expect(tasks.find(t => t.name === 'scan').runAfter).toEqual(['set-status-pending-ci-2']);
+  });
+
+  it('reconciles each reporter group separately', () => {
+    const strict = new GitHubStatusReporter();
+    const reportOnly = new GitHubStatusReporter({ failOnError: false });
+    const spec = specOf(
+      new Pipeline({ name: 'ci', tasks: [reportingTask('build', strict), reportingTask('scan', reportOnly)] }),
+    );
+    const finallyNames = (spec.finally as any[]).map(t => t.name);
+    expect(finallyNames).toContain('reconcile-status-ci');
+    expect(finallyNames).toContain('reconcile-status-ci-2');
+    const first = (spec.finally as any[]).find(t => t.name === 'reconcile-status-ci');
+    expect(first.params.map((p: any) => p.name)).toContain('status-build');
+    expect(first.params.map((p: any) => p.name)).not.toContain('status-scan');
+  });
+
+  it('leaves the single-reporter case byte-identical', () => {
+    const reporter = new GitHubStatusReporter();
+    const spec = specOf(
+      new Pipeline({ name: 'ci', tasks: [reportingTask('build', reporter), reportingTask('scan', reporter)] }),
+    );
+    const names = (spec.tasks as any[]).map(t => t.name);
+    expect(names.filter((n: string) => n.startsWith('set-status-pending'))).toEqual(['set-status-pending-ci']);
+    expect((spec.finally as any[]).map(t => t.name)).toEqual(['reconcile-status-ci']);
+  });
+});

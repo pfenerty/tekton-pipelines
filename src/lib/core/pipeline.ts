@@ -4,6 +4,7 @@ import { TEKTON_API_V1 } from '../constants';
 import { Param } from './param';
 import { Workspace } from './workspace';
 import { Task, TaskLike, TaskDef } from './task';
+import type { StatusReporter } from './status-reporter';
 import { TRIGGER_EVENTS } from './trigger-events';
 import { triggerEvents } from './pac-trigger';
 import type { PipelineTrigger } from './pac-trigger';
@@ -83,8 +84,12 @@ export class Pipeline {
    * `runAfter` entries exactly like `needs`.
    */
   private readonly overrideEdges = new Map<TaskLike, TaskLike[]>();
-  /** @internal Auto-generated task that sets all status contexts to pending at pipeline start. */
-  protected readonly _pendingTask?: TaskDef;
+  /**
+   * @internal Auto-generated tasks that set status contexts to pending at pipeline start —
+   * one per distinct {@link StatusReporter} instance, keyed by that reporter, since a
+   * reporter can only initialise the contexts it owns.
+   */
+  protected readonly _pendingTasks = new Map<StatusReporter, TaskDef>();
 
   private static _counter = 0;
 
@@ -109,21 +114,45 @@ export class Pipeline {
     );
 
     if (statusTasks.length > 0) {
-      const reporter = statusTasks[0].statusReporter!;
-      const contexts = statusTasks.map(t => t.statusContext!);
-      this._pendingTask = reporter.createPendingTask(contexts, `set-status-pending-${this.name}`);
-      this.allTasks = [this._pendingTask, ...regularTasks];
-
-      // A reporting task's own report-status step is its last step, so anything that stops
-      // the task from reaching it leaves the context stuck on "pending" from the task above:
-      // a `when` that skips the task, but equally an OOMKill, node eviction, image-pull
-      // failure or TaskRun timeout, none of which are gated and none of which run any step.
-      // Reconcile every reporting task in a `finally` task that runs after the whole DAG.
-      const reconcile = (reporter.createStatusReconcilerTask ?? reporter.createSkipResolverTask)?.bind(reporter);
-      if (reconcile) {
-        const entries = statusTasks.map(t => ({ taskName: t.name, context: t.statusContext! }));
-        (this.finallyTasks as TaskLike[]).push(reconcile(entries, `reconcile-status-${this.name}`));
+      // Group by reporter *instance*: a pending task is built by one reporter and can only
+      // initialise contexts that reporter owns. A pipeline mixing, say, a GitHub reporter
+      // with a Slack one used to report every context through whichever was discovered
+      // first — and even two instances of the same class can differ (failOnError).
+      const byReporter = new Map<StatusReporter, TaskDef[]>();
+      for (const task of statusTasks) {
+        const reporter = task.statusReporter!;
+        byReporter.set(reporter, [...(byReporter.get(reporter) ?? []), task]);
       }
+
+      const pendingTasks: TaskDef[] = [];
+      let index = 0;
+      for (const [reporter, tasks] of byReporter) {
+        // The first (usual, single-reporter) group keeps the unsuffixed names, so a project
+        // with one reporter emits exactly what it did before.
+        const suffix = index === 0 ? '' : `-${index + 1}`;
+        index++;
+        const pending = reporter.createPendingTask(
+          tasks.map(t => t.statusContext!),
+          `set-status-pending-${this.name}${suffix}`,
+        );
+        this._pendingTasks.set(reporter, pending);
+        pendingTasks.push(pending);
+
+        // A reporting task's own report-status step is its last step, so anything that stops
+        // the task from reaching it leaves the context stuck on "pending" from the task
+        // above: a `when` that skips the task, but equally an OOMKill, node eviction,
+        // image-pull failure or TaskRun timeout, none of which are gated and none of which
+        // run any step. Reconcile every reporting task in a `finally` task that runs after
+        // the whole DAG.
+        const reconcile = (reporter.createStatusReconcilerTask ?? reporter.createSkipResolverTask)?.bind(reporter);
+        if (reconcile) {
+          const entries = tasks.map(t => ({ taskName: t.name, context: t.statusContext! }));
+          (this.finallyTasks as TaskLike[]).push(
+            reconcile(entries, `reconcile-status-${this.name}${suffix}`),
+          );
+        }
+      }
+      this.allTasks = [...pendingTasks, ...regularTasks];
     } else {
       this.allTasks = regularTasks;
     }
@@ -319,8 +348,11 @@ export class Pipeline {
     let names = this.dependenciesOf(task)
       .filter(dep => this.allTasks.includes(dep))
       .map(dep => dep.name);
-    if (this._pendingTask && task instanceof TaskDef && task.statusContext && task.statusReporter && task !== this._pendingTask) {
-      names = [...names, this._pendingTask.name];
+    // A reporting task waits on the pending task built by *its own* reporter, so its context
+    // is initialised before it can report.
+    if (task instanceof TaskDef && task.statusContext && task.statusReporter) {
+      const pending = this._pendingTasks.get(task.statusReporter);
+      if (pending && pending !== task) names = [...names, pending.name];
     }
     return names;
   }
