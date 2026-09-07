@@ -13,6 +13,10 @@
     ".": {
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./testing": {
+      "require": "./dist/lib/testing/index.js",
+      "types": "./dist/lib/testing/index.d.ts"
     }
   },
   "bin": {

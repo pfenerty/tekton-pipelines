@@ -107,6 +107,7 @@ See [docs/cli.md](docs/cli.md).
 - [Getting started](docs/getting-started.md) — build a complete pipeline end to end
 - [Agent guide](docs/agent-guide.md) — full API reference with examples
 - [CLI](docs/cli.md) — `tektonic synth`, `check`, `graph`, `lint`
+- [Testing pipelines](docs/testing.md) — assert graph shape and gating in memory, no cluster
 - [Scripting](docs/scripting.md) — language tags, `scriptFromFile`, the exit-code contract, testing
 - [Caching](docs/caching.md) — PVC & GCS caches, compression, save strategies
 - [Secrets & security](docs/secrets.md) — env/file secret injection and security defaults
