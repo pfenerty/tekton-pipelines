@@ -8,6 +8,7 @@ import {
     DEFAULT_BASE_IMAGE,
     gcs,
     sh,
+    nu,
 } from "../src";
 
 // ─── Images ──────────────────────────────────────────────────────────────────
@@ -49,10 +50,14 @@ const npmTest = new Task({
             name: "test",
             image: nodeImage,
             workingDir: "$(workspaces.workspace.path)",
-            script: `#!/bin/sh
-[ ! -d node_modules ] && npm ci
-npm test; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC`,
-            onError: "continue",
+            // The exit-code contract is applied by the sh wrapper (the task reports status),
+            // so the body just runs and exits naturally — no hand-written EC plumbing, and
+            // no explicit onError: the framework sets it on every step of a reporting task.
+            script: sh`
+                set -e
+                if [ ! -d node_modules ]; then npm ci; fi
+                npm test
+            `,
         },
     ],
 });
@@ -76,10 +81,11 @@ const npmBuild = new Task({
             name: "build",
             image: nodeImage,
             workingDir: "$(workspaces.workspace.path)",
-            script: `#!/bin/sh
-[ ! -d node_modules ] && npm ci
-npm run build; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC`,
-            onError: "continue",
+            script: sh`
+                set -e
+                if [ ! -d node_modules ]; then npm ci; fi
+                npm run build
+            `,
         },
     ],
 });
@@ -104,25 +110,23 @@ const anchoreScann = new Task({
         {
             name: "generate-sbom",
             image: syftImage,
-            script: `#!/usr/bin/env nu
-def log [msg: string] {
-  print $"[(date now | format date '%H:%M:%S')] generate-sbom: ($msg)"
-}
+            // `log` comes from the nushell plugin's preamble — no hand-written def.
+            script: nu`
+                log "generate-sbom: generating SBOM from package-lock.json"
+                let start = (date now)
 
-log "generating SBOM from package-lock.json"
-let start = (date now)
+                ^syft file:package-lock.json -o cyclonedx-json=sbom.cyclonedx.json -o syft-table
 
-^syft file:package-lock.json -o cyclonedx-json=sbom.cyclonedx.json -o syft-table
+                let elapsed = ((date now) - $start | into int) / 1_000_000_000
+                log $"generate-sbom: done in ($elapsed)s"
 
-let elapsed = ((date now) - $start | into int) / 1_000_000_000
-log $"done in ($elapsed)s"
-
-if ("sbom.cyclonedx.json" | path exists) {
-  let size = (ls sbom.cyclonedx.json | get size.0)
-  log $"sbom size: ($size)"
-} else {
-  log "warning: sbom.cyclonedx.json not found"
-}`,
+                if ("sbom.cyclonedx.json" | path exists) {
+                  let size = (ls sbom.cyclonedx.json | get size.0)
+                  log $"generate-sbom: sbom size: ($size)"
+                } else {
+                  log "generate-sbom: warning: sbom.cyclonedx.json not found"
+                }
+            `,
         },
         {
             name: "scan",
@@ -133,26 +137,24 @@ if ("sbom.cyclonedx.json" | path exists) {
                     value: "$(workspaces.workspace.path)/grype-db",
                 },
             ],
-            script: `#!/usr/bin/env nu
-def log [msg: string] {
-  print $"[(date now | format date '%H:%M:%S')] grype-scan: ($msg)"
-}
+            script: nu`
+                log "grype-scan: scanning sbom.cyclonedx.json for vulnerabilities"
+                let start = (date now)
 
-log "scanning sbom.cyclonedx.json for vulnerabilities"
-let start = (date now)
+                # Run grype directly so stdout/stderr stream in real time. The step's failure
+                # must not stop the pipeline (the SARIF still needs uploading), and its exit
+                # code reaches the reporter through the contract file and Tekton's own
+                # /tekton/steps/step-scan/exitCode.
+                ^grype -v sbom:./sbom.cyclonedx.json -o sarif=./scan.sarif
 
-# Run grype directly so stdout/stderr stream in real time.
-# onError: continue prevents the step failure from stopping the pipeline;
-# the exit code is captured by the upload-sarif step via /tekton/steps/step-scan/exitCode.
-^grype -v sbom:./sbom.cyclonedx.json -o sarif=./scan.sarif
+                let elapsed = ((date now) - $start | into int) / 1_000_000_000
+                log $"grype-scan: done in ($elapsed)s"
 
-let elapsed = ((date now) - $start | into int) / 1_000_000_000
-log $"done in ($elapsed)s"
-
-if ("scan.sarif" | path exists) {
-  let size = (ls scan.sarif | get size.0)
-  log $"sarif size: ($size)"
-}`,
+                if ("scan.sarif" | path exists) {
+                  let size = (ls scan.sarif | get size.0)
+                  log $"grype-scan: sarif size: ($size)"
+                }
+            `,
             onError: "continue",
         },
         {
@@ -160,47 +162,42 @@ if ("scan.sarif" | path exists) {
             image: DEFAULT_BASE_IMAGE,
             // GITHUB_TOKEN is provided at the PipelineRun pod level via podTemplateEnv
             // (PAC's {{ git_auth_secret }}) — see the TektonicProject config below.
-            script: `#!/usr/bin/env nu
-def log [msg: string] {
-  print $"[(date now | format date '%H:%M:%S')] upload-sarif: ($msg)"
-}
+            // The grype exit code no longer needs propagating by hand: the reporter reads
+            // Tekton's own per-step exit codes, so a failing scan step turns the check red
+            // whatever this step does.
+            script: nu`
+                if not ("scan.sarif" | path exists) or (ls scan.sarif | get size.0) == 0B {
+                  log "upload-sarif: no sarif to upload, skipping"
+                  exit 0
+                }
 
-# Capture grype exit code for status reporting
-let grype_ec = (try { open --raw /tekton/steps/step-scan/exitCode | str trim | into int } catch { 0 })
-$grype_ec | into string | save -f /tekton/home/.exit-code
-log $"grype exit-code: ($grype_ec)"
+                let ref_raw = "${sourceBranchParam}"
+                let ref = if ($ref_raw | str starts-with "refs/") { $ref_raw } else { $"refs/heads/($ref_raw)" }
+                log $"upload-sarif: ref: ($ref)"
 
-if not ("scan.sarif" | path exists) or (ls scan.sarif | get size.0) == 0B {
-  log "no sarif to upload, skipping"
-  exit 0
-}
+                # Base64-encode the gzipped SARIF
+                let sarif_b64 = (open --raw scan.sarif | ^gzip -c | encode base64)
+                log $"upload-sarif: payload: (($sarif_b64 | str length) / 1024 | math round)KB base64"
 
-let ref_raw = "$(params.source-branch)"
-let ref = if ($ref_raw | str starts-with "refs/") { $ref_raw } else { $"refs/heads/($ref_raw)" }
-log $"ref: ($ref)"
+                let url = "https://api.github.com/repos/$(params.repo-full-name)/code-scanning/sarifs"
+                let body = {
+                  commit_sha: "$(params.revision)",
+                  ref: $ref,
+                  sarif: $sarif_b64,
+                }
 
-# Base64-encode the gzipped SARIF
-let sarif_b64 = (open --raw scan.sarif | ^gzip -c | encode base64)
-log $"sarif payload: (($sarif_b64 | str length) / 1024 | math round)KB base64"
+                log $"upload-sarif: POST ($url)"
 
-let url = "https://api.github.com/repos/$(params.repo-full-name)/code-scanning/sarifs"
-let body = {
-  commit_sha: "$(params.revision)",
-  ref: $ref,
-  sarif: $sarif_b64,
-}
-
-log $"POST ($url)"
-
-try {
-  http post $url $body -t application/json -H [
-    Authorization $"token ($env.GITHUB_TOKEN)"
-    Accept "application/vnd.github+json"
-  ]
-  log "uploaded"
-} catch { |e|
-  log $"upload failed: ($e.msg)"
-}`,
+                try {
+                  http post $url $body -t application/json -H [
+                    Authorization $"token ($env.GITHUB_TOKEN)"
+                    Accept "application/vnd.github+json"
+                  ]
+                  log "upload-sarif: uploaded"
+                } catch { |e|
+                  log $"upload-sarif: upload failed: ($e.msg)"
+                }
+            `,
             onError: "continue",
         },
     ],

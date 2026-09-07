@@ -705,9 +705,8 @@ The following is the actual self-CI pipeline for this repository. It shows:
 - SARIF upload to GitHub Advanced Security
 - Multiple pipelines (push vs. pull request) sharing tasks
 
-> The scripts below use the legacy raw-shebang form with manual exit-code plumbing. New code
-> should use the [script API](scripting.md) (`sh`/`nu`/`scriptFromFile`), which captures exit
-> codes automatically — see the note above.
+> The scripts below use the [script API](scripting.md) (`sh`/`nu`/`scriptFromFile`), which
+> captures exit codes automatically — see the note above.
 
 ```typescript
 import {
@@ -718,6 +717,9 @@ import {
     TRIGGER_EVENTS,
     GitHubStatusReporter,
     DEFAULT_BASE_IMAGE,
+    sh,
+    nu,
+    gcs,
 } from '@pfenerty/tektonic';
 
 const nodeImage = 'ghcr.io/pfenerty/apko-cicd/nodejs:22';
@@ -743,12 +745,13 @@ const npmTest = new Task({
         name: 'test',
         image: nodeImage,
         workingDir: '$(workspaces.workspace.path)',
-        // Write exit code to /tekton/home/.exit-code so the status reporter
-        // can report the correct status even when onError: continue is set.
-        script: `#!/bin/sh
-[ ! -d node_modules ] && npm ci
-npm test; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC`,
-        onError: 'continue',
+        // The framework applies the exit-code contract and onError: 'continue' — the body
+        // just runs and exits naturally.
+        script: sh`
+            set -e
+            if [ ! -d node_modules ]; then npm ci; fi
+            npm test
+        `,
     }],
 });
 
@@ -768,10 +771,11 @@ const npmBuild = new Task({
         name: 'build',
         image: nodeImage,
         workingDir: '$(workspaces.workspace.path)',
-        script: `#!/bin/sh
-[ ! -d node_modules ] && npm ci
-npm run build; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC`,
-        onError: 'continue',
+        script: sh`
+            set -e
+            if [ ! -d node_modules ]; then npm ci; fi
+            npm run build
+        `,
     }],
 });
 
@@ -793,25 +797,22 @@ const anchoreScann = new Task({
         {
             name: 'generate-sbom',
             image: syftImage,
-            script: `#!/usr/bin/env nu
-^syft file:package-lock.json -o cyclonedx-json=sbom.cyclonedx.json -o syft-table`,
+            script: nu`^syft file:package-lock.json -o cyclonedx-json=sbom.cyclonedx.json -o syft-table`,
         },
         {
             name: 'scan',
             image: grypeImage,
             env: [{ name: 'GRYPE_DB_CACHE_DIR', value: '$(workspaces.workspace.path)/grype-db' }],
-            script: `#!/usr/bin/env nu
-^grype -v sbom:./sbom.cyclonedx.json -o sarif=./scan.sarif`,
+            script: nu`^grype -v sbom:./sbom.cyclonedx.json -o sarif=./scan.sarif`,
             onError: 'continue',
         },
         {
             name: 'upload-sarif',
             image: DEFAULT_BASE_IMAGE,
             env: [{ name: 'GITHUB_TOKEN', valueFrom: { secretKeyRef: { name: 'github-token', key: 'token' } } }],
-            script: `#!/usr/bin/env nu
-let grype_ec = (try { open --raw /tekton/steps/step-scan/exitCode | str trim | into int } catch { 0 })
-$grype_ec | into string | save -f /tekton/home/.exit-code
-# ... upload scan.sarif to GitHub Advanced Security API`,
+            // The scan step's exit code needs no propagating by hand: the reporter reads
+            // Tekton's own /tekton/steps/step-scan/exitCode.
+            script: nu`# ... upload scan.sarif to GitHub Advanced Security API`,
             onError: 'continue',
         },
     ],
@@ -861,15 +862,12 @@ as if it runs normally — no manual plumbing:
 script: sh`npm ci && npm test`   // exit-code capture injected at synth time
 ```
 
-**Legacy raw-shebang strings are passed through unchanged**, so they bypass the automatic
-capture. If you still author steps as raw `#!/bin/sh` strings with a status reporter, keep the
-manual convention:
-
-```sh
-my-command; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC
-```
-
-Prefer the script API (see [scripting.md](scripting.md)) to avoid this entirely.
+**Raw `#!` strings are emitted verbatim**, so they bypass the automatic capture. In a task that
+reports status that is a silent green-on-failure, and synthesis now rejects it: author the body
+with a language tag, or state the opt-out with `rawScript()` when the step handles the contract
+itself. A non-zero `exit` in a capturing nushell body is rejected for the same reason — use
+`error make`, or `unsafeAllowExit()` when the code is deliberate. See
+[scripting.md](scripting.md#two-ways-the-contract-used-to-be-lost--both-now-fail-synthesis).
 
 ### Contexts left pending: skipped and terminated tasks
 

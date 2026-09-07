@@ -27,18 +27,21 @@ export class Nushell implements ScriptLanguage {
   }
 
   /**
-   * Warns about a non-zero `exit` in a capturing body.
+   * Fails synthesis on a non-zero `exit` in a capturing body.
    *
-   * Not an error. Before the reporter learned to read Tekton's per-step exit
-   * codes this was a silent-green bug; now it is only a loss of signal — the
-   * process dies before the catch above runs, so the failure is reported but
-   * arrives with no `error [task/step]` line explaining it. `error make` keeps
-   * both.
+   * nushell's `exit` cannot be trapped, so the process dies before the wrapper
+   * below persists anything: the contract file keeps its seeded `0`, and the
+   * failure survives only because the reporter also reads Tekton's per-step
+   * exit code — with no `error [task/step]` line to say what failed. This was a
+   * silent-green bug in a consumer's own drift check for months, which is why a
+   * warning is not enough for it. `error make {msg: "..."}` keeps both the
+   * failure and its message.
    *
    * `exit 0` is exempt: an early return from a body with nothing to do is a
-   * legitimate and common shape, and it cannot hide a failure.
+   * legitimate and common shape, and it cannot hide a failure. A body that
+   * genuinely must exit non-zero opts out with {@link unsafeAllowExit}.
    */
-  private warnOnExit(body: string, ctx: ScriptCtx): void {
+  private errorOnExit(body: string, ctx: ScriptCtx): void {
     const scannable = body
       // Raw strings carry scripts for *other* interpreters — ocidex's
       // go-vulncheck watchdog embeds a POSIX sh body whose `exit 99` is correct.
@@ -46,10 +49,11 @@ export class Nushell implements ScriptLanguage {
       .replace(/^\s*#.*$/gm, '');
     for (const [, arg] of scannable.matchAll(/(?:^|[;(|{\s])exit\s+(\S+)/g)) {
       if (arg === '0') continue;
-      // eslint-disable-next-line no-console
-      console.warn(
-        `tektonic${scriptLabel(ctx)}: nushell 'exit ${arg}' terminates before the ` +
-          `wrapper can report what failed. Use 'error make {msg: "..."}' instead.`,
+      throw new Error(
+        `tektonic${scriptLabel(ctx)}: nushell 'exit ${arg}' terminates before the wrapper can ` +
+          `record what failed, leaving the exit-code contract on its seeded 0. Raise instead ` +
+          `— error make {msg: "..."} — or wrap the body in unsafeAllowExit() if the exit is ` +
+          `deliberate.`,
       );
     }
   }
@@ -58,7 +62,7 @@ export class Nushell implements ScriptLanguage {
     if (!ctx.captureExitCode) {
       return `${this.preamble()}\n${body}`;
     }
-    this.warnOnExit(body, ctx);
+    if (!ctx.allowExit) this.errorOnExit(body, ctx);
     return [
       this.preamble(),
       // See Sh.wrap: the contract file is shared across steps that may run as

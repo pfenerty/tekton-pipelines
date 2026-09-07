@@ -95,24 +95,30 @@ spec:
       onError: continue
       script: |-
         #!/usr/bin/env nu
-        def log [msg: string] {
-          print $"[(date now | format date '%H:%M:%S')] generate-sbom: ($msg)"
-        }
-
-        log "generating SBOM from package-lock.json"
+        def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
+        if not ("/tekton/home/.exit-code" | path exists) { try { "0" | save -f /tekton/home/.exit-code } }
+        try { ^chmod 0666 /tekton/home/.exit-code }
+        def main [] {
+        log "generate-sbom: generating SBOM from package-lock.json"
         let start = (date now)
 
         ^syft file:package-lock.json -o cyclonedx-json=sbom.cyclonedx.json -o syft-table
 
         let elapsed = ((date now) - $start | into int) / 1_000_000_000
-        log $"done in ($elapsed)s"
+        log $"generate-sbom: done in ($elapsed)s"
 
         if ("sbom.cyclonedx.json" | path exists) {
           let size = (ls sbom.cyclonedx.json | get size.0)
-          log $"sbom size: ($size)"
+          log $"generate-sbom: sbom size: ($size)"
         } else {
-          log "warning: sbom.cyclonedx.json not found"
+          log "generate-sbom: warning: sbom.cyclonedx.json not found"
         }
+        }
+        let __tek_rc = (try { main; 0 } catch { |e| print $"error [anchore-scan/generate-sbom]: ($e.msg)"; 1 })
+        let __tek_prev = (try { open --raw /tekton/home/.exit-code | str trim | into int } catch { 0 })
+        let __tek_worst = ([$__tek_prev $__tek_rc] | math max)
+        $"($__tek_worst)" | save -f /tekton/home/.exit-code
+        exit $__tek_rc
     - env:
         - name: GRYPE_DB_CACHE_DIR
           value: $(workspaces.workspace.path)/grype-db
@@ -121,51 +127,53 @@ spec:
       onError: continue
       script: |-
         #!/usr/bin/env nu
-        def log [msg: string] {
-          print $"[(date now | format date '%H:%M:%S')] grype-scan: ($msg)"
-        }
-
-        log "scanning sbom.cyclonedx.json for vulnerabilities"
+        def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
+        if not ("/tekton/home/.exit-code" | path exists) { try { "0" | save -f /tekton/home/.exit-code } }
+        try { ^chmod 0666 /tekton/home/.exit-code }
+        def main [] {
+        log "grype-scan: scanning sbom.cyclonedx.json for vulnerabilities"
         let start = (date now)
 
-        # Run grype directly so stdout/stderr stream in real time.
-        # onError: continue prevents the step failure from stopping the pipeline;
-        # the exit code is captured by the upload-sarif step via /tekton/steps/step-scan/exitCode.
+        # Run grype directly so stdout/stderr stream in real time. The step's failure
+        # must not stop the pipeline (the SARIF still needs uploading), and its exit
+        # code reaches the reporter through the contract file and Tekton's own
+        # /tekton/steps/step-scan/exitCode.
         ^grype -v sbom:./sbom.cyclonedx.json -o sarif=./scan.sarif
 
         let elapsed = ((date now) - $start | into int) / 1_000_000_000
-        log $"done in ($elapsed)s"
+        log $"grype-scan: done in ($elapsed)s"
 
         if ("scan.sarif" | path exists) {
           let size = (ls scan.sarif | get size.0)
-          log $"sarif size: ($size)"
+          log $"grype-scan: sarif size: ($size)"
         }
+        }
+        let __tek_rc = (try { main; 0 } catch { |e| print $"error [anchore-scan/scan]: ($e.msg)"; 1 })
+        let __tek_prev = (try { open --raw /tekton/home/.exit-code | str trim | into int } catch { 0 })
+        let __tek_worst = ([$__tek_prev $__tek_rc] | math max)
+        $"($__tek_worst)" | save -f /tekton/home/.exit-code
+        exit $__tek_rc
     - image: ghcr.io/pfenerty/apko-cicd/base:stable
       name: upload-sarif
       onError: continue
       script: |-
         #!/usr/bin/env nu
-        def log [msg: string] {
-          print $"[(date now | format date '%H:%M:%S')] upload-sarif: ($msg)"
-        }
-
-        # Capture grype exit code for status reporting
-        let grype_ec = (try { open --raw /tekton/steps/step-scan/exitCode | str trim | into int } catch { 0 })
-        $grype_ec | into string | save -f /tekton/home/.exit-code
-        log $"grype exit-code: ($grype_ec)"
-
+        def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
+        if not ("/tekton/home/.exit-code" | path exists) { try { "0" | save -f /tekton/home/.exit-code } }
+        try { ^chmod 0666 /tekton/home/.exit-code }
+        def main [] {
         if not ("scan.sarif" | path exists) or (ls scan.sarif | get size.0) == 0B {
-          log "no sarif to upload, skipping"
+          log "upload-sarif: no sarif to upload, skipping"
           exit 0
         }
 
         let ref_raw = "$(params.source-branch)"
         let ref = if ($ref_raw | str starts-with "refs/") { $ref_raw } else { $"refs/heads/($ref_raw)" }
-        log $"ref: ($ref)"
+        log $"upload-sarif: ref: ($ref)"
 
         # Base64-encode the gzipped SARIF
         let sarif_b64 = (open --raw scan.sarif | ^gzip -c | encode base64)
-        log $"sarif payload: (($sarif_b64 | str length) / 1024 | math round)KB base64"
+        log $"upload-sarif: payload: (($sarif_b64 | str length) / 1024 | math round)KB base64"
 
         let url = "https://api.github.com/repos/$(params.repo-full-name)/code-scanning/sarifs"
         let body = {
@@ -174,17 +182,23 @@ spec:
           sarif: $sarif_b64,
         }
 
-        log $"POST ($url)"
+        log $"upload-sarif: POST ($url)"
 
         try {
           http post $url $body -t application/json -H [
             Authorization $"token ($env.GITHUB_TOKEN)"
             Accept "application/vnd.github+json"
           ]
-          log "uploaded"
+          log "upload-sarif: uploaded"
         } catch { |e|
-          log $"upload failed: ($e.msg)"
+          log $"upload-sarif: upload failed: ($e.msg)"
         }
+        }
+        let __tek_rc = (try { main; 0 } catch { |e| print $"error [anchore-scan/upload-sarif]: ($e.msg)"; 1 })
+        let __tek_prev = (try { open --raw /tekton/home/.exit-code | str trim | into int } catch { 0 })
+        let __tek_worst = ([$__tek_prev $__tek_rc] | math max)
+        $"($__tek_worst)" | save -f /tekton/home/.exit-code
+        exit $__tek_rc
     - env:
         - name: CLOUDSDK_CONFIG
           value: /tekton/home/.config/gcloud

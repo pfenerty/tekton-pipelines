@@ -2,6 +2,7 @@ import { Sh } from './sh';
 import { Bash } from './bash';
 import { Nushell } from './nushell';
 import { Python } from './python';
+import { scriptLabel, EXIT_CODE_PATH } from './types';
 import type { ScriptLanguage, ScriptCtx } from './types';
 
 export type { ScriptLanguage, ScriptCtx } from './types';
@@ -30,9 +31,62 @@ export function languageFor(name: LanguageName): ScriptLanguage {
   return lang;
 }
 
+/** Per-body opt-outs from a framework guard. */
+export interface ScriptOptions {
+  /**
+   * Permit a non-zero `exit` in a body the exit-code contract wraps. Only nushell rejects
+   * one by default (its `exit` is untrappable and bypasses the wrapper); set by
+   * {@link unsafeAllowExit} so the decision is visible at the call site.
+   */
+  allowExit?: boolean;
+}
+
 /** A script body paired with the {@link ScriptLanguage} that should render it. */
 export class Script {
-  constructor(readonly language: ScriptLanguage, readonly body: string) {}
+  constructor(
+    readonly language: ScriptLanguage,
+    readonly body: string,
+    readonly options: ScriptOptions = {},
+  ) {}
+}
+
+/**
+ * States that a non-zero `exit` in this body is deliberate, so nushell renders it instead of
+ * failing synthesis.
+ *
+ * The exit still terminates the process before the capture wrapper runs: the failure reaches
+ * the status reporter through Tekton's own per-step exit code, but with no `error [task/step]`
+ * line to explain it. Prefer `error make {msg: "..."}`; reach for this only when the exit code
+ * itself carries meaning (a watchdog signalling a specific code, say).
+ *
+ * @example
+ * ```ts
+ * script: unsafeAllowExit(nu`if $over_budget { exit 99 }`)
+ * ```
+ */
+export function unsafeAllowExit(script: Script): Script {
+  return new Script(script.language, script.body, { ...script.options, allowExit: true });
+}
+
+/**
+ * A body emitted verbatim — no shebang, no preamble, no exit-code capture.
+ *
+ * The framework's contract only holds for bodies it wraps, so opting out has to be a stated
+ * decision rather than a side effect of a string starting with `#!`. Use it when the step
+ * writes {@link EXIT_CODE_PATH} itself, or runs an interpreter tektonic has no plugin for.
+ *
+ * @example
+ * ```ts
+ * script: rawScript(`#!/usr/bin/env nu\n# writes the contract file itself\n...`)
+ * ```
+ */
+export class RawScript {
+  constructor(readonly body: string) {}
+}
+
+/** Marks a body as deliberately unwrapped. See {@link RawScript}. */
+export function rawScript(body: string): RawScript {
+  return new RawScript(body);
 }
 
 /** Object form accepted by `TaskStepSpec.script`, e.g. `{ language: 'python', body: '…' }`. */
@@ -42,7 +96,7 @@ export interface ScriptObject {
 }
 
 /** Anything accepted by `TaskStepSpec.script`. */
-export type ScriptInput = string | Script | ScriptObject;
+export type ScriptInput = string | Script | ScriptObject | RawScript;
 
 /**
  * Removes surrounding blank lines and the common leading indentation from a
@@ -92,8 +146,10 @@ export function script(spec: ScriptObject): Script {
  *
  * - A {@link Script} (from a tag or {@link script}) is rendered by its language.
  * - A {@link ScriptObject} is rendered by the named language.
- * - A raw string that begins with a shebang is passed through unchanged
- *   (legacy/back-compat, including the library's own injected steps).
+ * - A {@link RawScript} is emitted verbatim — the explicit opt-out from wrapping.
+ * - A raw string that begins with a shebang is passed through unchanged, except in a task
+ *   that reports status: there, passing through silently drops the exit-code contract the
+ *   reporter depends on, so it is rejected in favour of a language tag or {@link rawScript}.
  * - A raw string without a shebang is rendered with `defaultLanguage` if one is
  *   set, otherwise passed through unchanged.
  */
@@ -102,11 +158,25 @@ export function renderScript(
   ctx: ScriptCtx,
   defaultLanguage?: LanguageName,
 ): string {
+  if (input instanceof RawScript) return input.body;
   if (typeof input === 'string') {
-    if (input.startsWith('#!')) return input;
+    if (input.startsWith('#!')) {
+      if (ctx.captureExitCode) {
+        throw new Error(
+          `tektonic${scriptLabel(ctx)}: a raw '#!' script string is emitted verbatim, so it ` +
+            `silently opts out of the exit-code contract this task's status reporter reads — ` +
+            `a failure here can report green. Author the body with a language tag (sh/bash/nu/py) ` +
+            `so the contract is applied, or wrap it in rawScript() if the step writes ` +
+            `${EXIT_CODE_PATH} itself.`,
+        );
+      }
+      return input;
+    }
     if (defaultLanguage) return languageFor(defaultLanguage).wrap(dedent(input), ctx);
     return input;
   }
-  if (input instanceof Script) return input.language.wrap(input.body, ctx);
+  if (input instanceof Script) {
+    return input.language.wrap(input.body, { ...ctx, allowExit: input.options.allowExit });
+  }
   return languageFor(input.language).wrap(dedent(input.body), ctx);
 }

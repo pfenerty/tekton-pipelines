@@ -82,6 +82,12 @@ export interface ScriptCtx {
    */
   taskName?: string;
   stepName?: string;
+  /**
+   * Set by {@link unsafeAllowExit} on the body being rendered: the author has stated that a
+   * non-zero `exit` in this body is deliberate, so a language whose `exit` bypasses the
+   * capture wrapper (nushell) permits it instead of failing synthesis.
+   */
+  allowExit?: boolean;
 }
 
 /**

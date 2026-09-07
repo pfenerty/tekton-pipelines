@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bash, nu, py, script, Script, dedent, languageFor, renderScript } from './index';
+import { bash, nu, py, script, Script, rawScript, unsafeAllowExit, dedent, languageFor, renderScript } from './index';
 import { EXIT_CODE_PATH } from './types';
 
 const ctx = (captureExitCode = false) => ({ exitCodePath: EXIT_CODE_PATH, captureExitCode });
@@ -70,5 +70,24 @@ describe('renderScript', () => {
   it('renders an object form via the named language', () => {
     const out = renderScript({ language: 'nushell', body: 'print hi' }, ctx());
     expect(out.startsWith('#!/usr/bin/env nu')).toBe(true);
+  });
+
+  // A verbatim body writes no exit code, so in a reporting task it silently opts out of the
+  // contract the reporter reads — the shape that lets a real failure report green.
+  it('rejects a raw shebang string in a capturing task', () => {
+    expect(() => renderScript('#!/bin/sh\nfalse', { ...ctx(true), taskName: 'lint' })).toThrow(
+      /raw '#!' script string.*rawScript\(\)/s,
+    );
+  });
+
+  it('emits a rawScript() body verbatim, capturing or not', () => {
+    const body = '#!/bin/sh\nfalse';
+    expect(renderScript(rawScript(body), ctx(true))).toBe(body);
+    expect(renderScript(rawScript(body), ctx())).toBe(body);
+  });
+
+  it('carries a Script opt-out through to the language wrapper', () => {
+    expect(() => renderScript(nu`exit 7`, ctx(true))).toThrow(/unsafeAllowExit/);
+    expect(renderScript(unsafeAllowExit(nu`exit 7`), ctx(true))).toContain('exit 7');
   });
 });

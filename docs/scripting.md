@@ -164,17 +164,45 @@ still runs. Tektonic owns this plumbing:
 You therefore **do not** hand-write `echo $? > /tekton/home/.exit-code` or set
 `onError` — write the body as if it runs normally and `exit`/`error make`/`sys.exit` naturally.
 
-> **Prefer `error make` to `exit 1` in nushell.** Both are now reported correctly — the reporter
-> reads Tekton's per-step exit code, which survives nushell's untrappable `exit` — but `exit`
-> kills the process before the wrapper's catch runs, so the failure arrives with no message
-> attached. Tektonic warns at synth time on a non-zero `exit` in a capturing nu body. `exit 0` is
-> fine: an early return from a body with nothing to do cannot hide a failure.
+### Two ways the contract used to be lost — both now fail synthesis
 
-> **Legacy caveat:** this automatic capture only applies to tagged/object/file scripts (and
-> bare strings rendered via a default language). A raw string that begins with a shebang is
-> passed through verbatim, so if you still use that form with a status reporter you must keep
-> the manual `EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC` plumbing. Prefer the script
-> API to avoid it.
+**A non-zero `exit` in a nushell body.** nushell's `exit` cannot be trapped: it kills the process
+before the wrapper records anything, leaving the contract file on its seeded `0`. The failure
+survives only through Tekton's own per-step exit code, with no `error [task/step]` line to say
+what happened — and in a hand-rolled drift check that reported green on drift for months. So a
+non-zero `exit` in a capturing nu body is now a synth-time **error**:
+
+```
+tektonic [tekton-check/check]: nushell 'exit 1' terminates before the wrapper can record what
+failed, leaving the exit-code contract on its seeded 0. Raise instead — error make {msg: "..."}
+— or wrap the body in unsafeAllowExit() if the exit is deliberate.
+```
+
+Use `error make {msg: "..."}`, which keeps both the failure and its message. `exit 0` stays
+fine: an early return from a body with nothing to do cannot hide a failure. When the exit code
+itself carries meaning (a watchdog signalling a specific code), state that at the call site:
+
+```typescript
+import { nu, unsafeAllowExit } from '@pfenerty/tektonic';
+
+script: unsafeAllowExit(nu`if $over_budget { exit 99 }`)
+```
+
+**A raw `#!` string.** Wrapping only applies to tagged/object/file scripts (and bare strings
+rendered via a default language). A string that begins with a shebang is emitted verbatim — so
+in a task that reports status it silently opts out of the contract the reporter reads, and a
+failure there can report green. That is now rejected too. Either author the body with a language
+tag, or state the opt-out with `rawScript()` when the step writes `EXIT_CODE_PATH` itself or
+runs an interpreter tektonic has no plugin for:
+
+```typescript
+import { rawScript } from '@pfenerty/tektonic';
+
+script: rawScript(`#!/usr/bin/env ruby\n# this step owns its own exit-code handling\n...`)
+```
+
+Outside a reporting task a raw `#!` string still passes through unchanged — there is no contract
+to lose.
 
 ## Testing scripts
 

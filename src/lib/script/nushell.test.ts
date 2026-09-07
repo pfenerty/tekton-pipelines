@@ -68,35 +68,34 @@ describe('Nushell plugin', () => {
     });
   });
 
-  describe('non-zero exit warning', () => {
-    const warn = () => vi.spyOn(console, 'warn').mockImplementation(() => {});
-    afterEach(() => vi.restoreAllMocks());
-
-    it('warns, naming the task and step and the replacement', () => {
-      const spy = warn();
-      nu.wrap('if $bad { exit 1 }', { ...ctx(true), taskName: 'fmt', stepName: 'check' });
-      expect(spy).toHaveBeenCalledTimes(1);
-      const msg = spy.mock.calls[0][0] as string;
-      expect(msg).toContain('[fmt/check]');
-      expect(msg).toContain('error make');
+  describe('non-zero exit in a capturing body', () => {
+    // The failure mode this guards: nushell's exit is untrappable, so the wrapper never runs
+    // and the contract file keeps its seeded 0 — a real failure that reported green.
+    it('fails synthesis, naming the task, step and the replacement', () => {
+      expect(() =>
+        nu.wrap('if $bad { exit 1 }', { ...ctx(true), taskName: 'fmt', stepName: 'check' }),
+      ).toThrow(/\[fmt\/check\].*error make/s);
     });
 
-    it('does not warn on exit 0, an early return that cannot hide a failure', () => {
-      const spy = warn();
-      nu.wrap('if $skip { exit 0 }\nlog "work"', ctx(true));
-      expect(spy).not.toHaveBeenCalled();
+    it('points at the opt-out for a deliberate exit', () => {
+      expect(() => nu.wrap('exit 99', ctx(true))).toThrow(/unsafeAllowExit/);
     });
 
-    it('does not warn about an exit inside a raw string bound for another interpreter', () => {
-      const spy = warn();
-      nu.wrap(`^sh -c r#'if [ -n "$x" ]; then exit 99; fi'#`, ctx(true));
-      expect(spy).not.toHaveBeenCalled();
+    it('renders the body when the author opted out', () => {
+      const out = nu.wrap('exit 99', { ...ctx(true), allowExit: true });
+      expect(out).toContain('exit 99');
     });
 
-    it('does not warn on a non-capturing body, which owns its own exit code', () => {
-      const spy = warn();
-      nu.wrap('exit 1', ctx(false));
-      expect(spy).not.toHaveBeenCalled();
+    it('allows exit 0, an early return that cannot hide a failure', () => {
+      expect(() => nu.wrap('if $skip { exit 0 }\nlog "work"', ctx(true))).not.toThrow();
+    });
+
+    it('ignores an exit inside a raw string bound for another interpreter', () => {
+      expect(() => nu.wrap(`^sh -c r#'if [ -n "$x" ]; then exit 99; fi'#`, ctx(true))).not.toThrow();
+    });
+
+    it('allows exit in a non-capturing body, which owns its own exit code', () => {
+      expect(() => nu.wrap('exit 1', ctx(false))).not.toThrow();
     });
   });
 });
