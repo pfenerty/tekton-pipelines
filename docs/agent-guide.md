@@ -342,6 +342,27 @@ This bites most often with `GitPipeline`, which generates its own `git-clone` pe
 `cloneDepth`, `cloneImage` and `chainsProvenance` must agree across every `GitPipeline` in a
 project. Give one of them a distinct task name if they genuinely need to differ.
 
+### Shared task defaults (`taskPreset`)
+
+Tasks in one project usually agree on more than they differ — the same reporter, resources,
+base env, workspace — and restating that per task is where it drifts. A preset states it once:
+
+```typescript
+import { taskPreset } from '@pfenerty/tektonic';
+
+const ciTask = taskPreset({
+  statusReporter,
+  workspaces: [workspace],
+  step: { computeResources: { requests: { cpu: '250m', memory: '512Mi' } } },
+});
+
+const test = ciTask({ name: 'test', steps: [{ name: 'test', image: goImage, script: sh`go test ./...` }] });
+```
+
+The call always wins: `name` and `steps` come from it, named collections dedupe by name,
+`stepTemplate`/`annotations` merge per key, and `step` defaults merge into each step (`env` by
+name). See [job-libraries.md](job-libraries.md) for the task-factory pattern this supports.
+
 ### PAC params and workspace paths, typed
 
 The params Pipelines as Code fills in for every run are exported as `PAC_PARAMS`, so a task can
