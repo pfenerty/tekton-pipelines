@@ -844,12 +844,19 @@ my-command; EC=$?; echo $EC > /tekton/home/.exit-code; exit $EC
 
 Prefer the script API (see [scripting.md](scripting.md)) to avoid this entirely.
 
-### Skipped, `when`-gated tasks
+### Contexts left pending: skipped and terminated tasks
 
 A task with a `statusReporter` starts as `pending` (via the pipeline's auto-generated
 `set-status-pending-*` task) and normally resolves to `success`/`failure` via its own last step.
-If the task is also gated by a `when` condition (directly, or via `gated(task, { when })`) and
-gets skipped by Tekton, that last step never runs — so `Pipeline` auto-adds a
-`resolve-skipped-status-*` `finally` task that checks the skipped task's runtime status
-(`$(tasks.<name>.status)`) and resolves its context to `success`/`"Skipped"`. This is automatic;
-no extra configuration is needed.
+Anything that stops the task from reaching that step would otherwise leave its context pending
+forever, so `Pipeline` auto-adds a `reconcile-status-*` `finally` task covering **every**
+reporting task in the pipeline. It reads each task's runtime status (`$(tasks.<name>.status)`)
+and acts on the two values that mean the report step never ran:
+
+| Status | Cause | Reconciled to |
+|--------|-------|---------------|
+| `None` | Skipped by `when` — directly, via `gated(task, { when })`, or because an ancestor was skipped or failed | `success` / `"Skipped"` |
+| `Failed` | Failed, including infrastructure kills that run no step at all: OOMKill, node eviction, image-pull failure, TaskRun timeout | `failure` / `"Failed or terminated"` |
+
+A task that ran and reported its own failure is simply re-reported red, which is idempotent for
+the context. All of this is automatic; no extra configuration is needed.

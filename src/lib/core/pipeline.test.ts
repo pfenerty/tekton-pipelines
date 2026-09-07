@@ -224,7 +224,7 @@ describe('Pipeline', () => {
     expect(nameOf(push)).not.toBe(nameOf(pr));
   });
 
-  it('a when-gated statusReporter task gets a skip-resolver finally task', () => {
+  it('a when-gated statusReporter task gets a status-reconciler finally task', () => {
     const reporter = new GitHubStatusReporter();
     const reportingTask = new Task({
       name: 'deploy',
@@ -238,18 +238,18 @@ describe('Pipeline', () => {
     pipeline._build(chart, 'pipeline', 'ns');
     const manifest = chart.toJson()[0];
     const finallyTasks = manifest.spec.finally ?? [];
-    expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci')).toBeDefined();
+    expect(finallyTasks.find((t: any) => t.name === 'reconcile-status-ci')).toBeDefined();
     // finally tasks are not chained via runAfter — they always run after the whole DAG.
-    expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci').runAfter).toBeUndefined();
+    expect(finallyTasks.find((t: any) => t.name === 'reconcile-status-ci').runAfter).toBeUndefined();
     // The gated task's status must reach the resolver as a param — the only scope where
     // Tekton substitutes $(tasks.*). Inlined in the step script it stays literal.
-    expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci').params)
+    expect(finallyTasks.find((t: any) => t.name === 'reconcile-status-ci').params)
       .toContainEqual({ name: 'status-deploy', value: '$(tasks.deploy.status)' });
     // ...and it must not leak into the pipeline's own params, which the PipelineRun supplies.
     expect(manifest.spec.params.map((p: any) => p.name)).not.toContain('status-deploy');
   });
 
-  it('gated() override with when also gets a skip-resolver finally task', () => {
+  it('gated() override with when also gets a status-reconciler finally task', () => {
     const reporter = new GitHubStatusReporter();
     const reportingTask = new Task({
       name: 'publish',
@@ -265,10 +265,12 @@ describe('Pipeline', () => {
     pipeline._build(chart, 'pipeline', 'ns');
     const manifest = chart.toJson()[0];
     const finallyTasks = manifest.spec.finally ?? [];
-    expect(finallyTasks.find((t: any) => t.name === 'resolve-skipped-status-ci')).toBeDefined();
+    expect(finallyTasks.find((t: any) => t.name === 'reconcile-status-ci')).toBeDefined();
   });
 
-  it('an ungated statusReporter task does not trigger a skip-resolver task', () => {
+  // An ungated task cannot be skipped, but it can still be OOMKilled, evicted or timed out
+  // before it reaches its own report-status step — leaving the context pending forever.
+  it('an ungated statusReporter task is reconciled too', () => {
     const reporter = new GitHubStatusReporter();
     const reportingTask = new Task({
       name: 'test-ungated',
@@ -280,7 +282,30 @@ describe('Pipeline', () => {
     const chart = new Chart(app, 'test');
     pipeline._build(chart, 'pipeline', 'ns');
     const manifest = chart.toJson()[0];
-    expect(manifest.spec.finally).toBeUndefined();
+    const reconciler = (manifest.spec.finally ?? []).find((t: any) => t.name === 'reconcile-status-ci');
+    expect(reconciler).toBeDefined();
+    expect(reconciler.params).toContainEqual({ name: 'status-test-ungated', value: '$(tasks.test-ungated.status)' });
+  });
+
+  it('reconciles every reporting task in the pipeline, gated or not', () => {
+    const reporter = new GitHubStatusReporter();
+    const mkTask = (name: string, when?: ReturnType<typeof onBranch>) => new Task({
+      name,
+      statusReporter: reporter,
+      ...(when && { when }),
+      steps: [{ name: 's', image: 'alpine', onError: 'continue' }],
+    });
+    const pipeline = new Pipeline({
+      name: 'ci',
+      tasks: [mkTask('plain'), mkTask('guarded', onBranch('main'))],
+    });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const reconciler = (chart.toJson()[0].spec.finally ?? []).find((t: any) => t.name === 'reconcile-status-ci');
+    expect(reconciler.params.map((p: any) => p.name)).toEqual(
+      expect.arrayContaining(['status-plain', 'status-guarded']),
+    );
   });
 
   it('_build() omits finally when no finally tasks', () => {

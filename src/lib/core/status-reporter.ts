@@ -44,13 +44,29 @@ export interface StatusReporter {
   finalStep(context: string, userStepNames?: string[]): TaskStepSpec;
 
   /**
-   * Returns a Task (for the pipeline's `finally` block) that resolves any context left on
-   * "pending" because its task was skipped by `when`. One step per entry, checking Tekton's
-   * `$(tasks.<taskName>.status)`; no-ops when the task actually ran (its own {@link finalStep}
-   * already reported it).
+   * Returns a Task (for the pipeline's `finally` block) that reconciles any context left on
+   * "pending" after the DAG settles. One step per entry, checking Tekton's
+   * `$(tasks.<taskName>.status)`:
+   *
+   * - `None` — the task was skipped by `when` (directly, or because an ancestor was
+   *   skipped or failed), so its own {@link finalStep} never ran.
+   * - `Failed` — the task failed, possibly at the infrastructure level (OOMKill, node
+   *   eviction, image-pull failure, TaskRun timeout), in which case {@link finalStep} never
+   *   ran either and nothing else will take the context off "pending".
+   *
+   * A task that ran to completion normally reported itself via {@link finalStep}; the step
+   * no-ops for it.
    *
    * Optional so existing external implementations of {@link StatusReporter} keep compiling —
-   * pipelines simply skip skip-resolution when a reporter doesn't implement it.
+   * pipelines simply skip reconciliation when a reporter implements neither this nor the
+   * deprecated {@link createSkipResolverTask}.
+   */
+  createStatusReconcilerTask?(entries: { taskName: string; context: string }[], name?: string): Task;
+
+  /**
+   * @deprecated Implement {@link createStatusReconcilerTask} instead — it covers tasks
+   * terminated by the infrastructure as well as skipped ones. Pipelines fall back to this
+   * method when a reporter does not implement the newer one.
    */
   createSkipResolverTask?(entries: { taskName: string; context: string }[], name?: string): Task;
 

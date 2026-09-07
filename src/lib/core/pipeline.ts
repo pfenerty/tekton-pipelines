@@ -103,14 +103,15 @@ export class Pipeline {
       this._pendingTask = reporter.createPendingTask(contexts, `set-status-pending-${this.name}`);
       this.allTasks = [this._pendingTask, ...regularTasks];
 
-      // Tasks gated by `when` may be skipped by Tekton entirely, so their own report-status
-      // step (the task's last step) never runs and their context is stuck on "pending" from
-      // the task above. Resolve those in a `finally` task that runs after the whole DAG.
-      const gatedStatusTasks = statusTasks.filter(t => this.effectiveWhen(t) !== undefined);
-      if (gatedStatusTasks.length > 0 && reporter.createSkipResolverTask) {
-        const entries = gatedStatusTasks.map(t => ({ taskName: t.name, context: t.statusContext! }));
-        const skipResolverTask = reporter.createSkipResolverTask(entries, `resolve-skipped-status-${this.name}`);
-        (this.finallyTasks as TaskLike[]).push(skipResolverTask);
+      // A reporting task's own report-status step is its last step, so anything that stops
+      // the task from reaching it leaves the context stuck on "pending" from the task above:
+      // a `when` that skips the task, but equally an OOMKill, node eviction, image-pull
+      // failure or TaskRun timeout, none of which are gated and none of which run any step.
+      // Reconcile every reporting task in a `finally` task that runs after the whole DAG.
+      const reconcile = (reporter.createStatusReconcilerTask ?? reporter.createSkipResolverTask)?.bind(reporter);
+      if (reconcile) {
+        const entries = statusTasks.map(t => ({ taskName: t.name, context: t.statusContext! }));
+        (this.finallyTasks as TaskLike[]).push(reconcile(entries, `reconcile-status-${this.name}`));
       }
     } else {
       this.allTasks = regularTasks;
@@ -172,6 +173,7 @@ export class Pipeline {
   /**
    * The `when` that will actually gate `task` in this pipeline: a `gated()` wrapper's override
    * replaces the task's own `when` for that pipeline edge, so it takes precedence when present.
+   * Exposed for subclasses that need the effective gate without reaching into the overlay.
    */
   protected effectiveWhen(task: TaskDef): TaskDef['when'] {
     const overrides = this.taskOverrides.get(task);
