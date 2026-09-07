@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { App, Chart } from 'cdk8s';
 import { Pipeline } from './pipeline';
 import { Task } from './task';
+import { Result } from './result';
+import { equals } from './condition';
+import { GitPipeline } from './git-pipeline';
 import { gated, unwrapGated } from './pipeline-task';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -191,5 +194,49 @@ describe('gated() identity', () => {
     const marker = gated(test, { retries: 1 });
     expect(unwrapGated(marker)).toBe(test);
     expect(unwrapGated(test)).toBe(test);
+  });
+});
+
+describe('gated() condition sources', () => {
+  const detected = () => {
+    const changed = new Result({ name: 'changed' });
+    const detect = new Task({
+      name: 'detect-changes',
+      results: [changed],
+      steps: [{ name: 'detect', image: 'git' }],
+    });
+    return { detect, cond: equals(changed, 'true') };
+  };
+
+  it('pulls the producing task of an override condition into the pipeline', () => {
+    const { detect, cond } = detected();
+    const build = new Task({ name: 'build', steps: [{ name: 'build', image: 'node' }] });
+    const pipeline = new Pipeline({ name: 'ci', tasks: [gated(build, { when: cond })] });
+    expect(pipeline.allTasks).toContain(detect);
+
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const tasks = (chart.toJson()[0] as AnyObj).spec.tasks as AnyObj[];
+    expect(tasks.map(t => t.name)).toContain('detect-changes');
+    expect(tasks.find(t => t.name === 'build')?.runAfter).toEqual(['detect-changes']);
+  });
+
+  it('does not duplicate an edge already declared in needs', () => {
+    const { detect, cond } = detected();
+    const build = new Task({ name: 'build', needs: [detect], steps: [{ name: 'build', image: 'node' }] });
+    const pipeline = new Pipeline({ name: 'ci', tasks: [gated(build, { when: cond })] });
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    pipeline._build(chart, 'pipeline', 'ns');
+    const tasks = (chart.toJson()[0] as AnyObj).spec.tasks as AnyObj[];
+    expect(tasks.find(t => t.name === 'build')?.runAfter).toEqual(['detect-changes']);
+  });
+
+  it('GitPipeline injects the shared workspace into a condition-sourced detection task', () => {
+    const { detect, cond } = detected();
+    const build = new Task({ name: 'build', steps: [{ name: 'build', image: 'node' }] });
+    const pipeline = new GitPipeline({ name: 'ci', tasks: [gated(build, { when: cond })] });
+    expect(detect.workspaces.map(w => w.name)).toContain(pipeline.workspace.name);
   });
 });

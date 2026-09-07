@@ -3,7 +3,8 @@ import { Workspace } from "./workspace";
 import { Task, TaskLike } from "./task";
 import { Result } from "./result";
 import { Pipeline, PipelineOptions } from "./pipeline";
-import { unwrapGated } from "./pipeline-task";
+import { GatedTask, unwrapGated } from "./pipeline-task";
+import { Condition } from "./condition";
 import { DEFAULT_BASE_IMAGE } from "../constants";
 import { sh } from "../script";
 
@@ -202,6 +203,11 @@ export class GitPipeline extends Pipeline {
             if (seen.has(t)) return;
             seen.add(t);
             for (const dep of t.needs) visit(dep);
+            // A `gated()` override condition pulls its producing task into the pipeline
+            // (Pipeline wires the edge), so that task needs the shared workspace too.
+            if (node instanceof GatedTask && node._overrides.when instanceof Condition) {
+                for (const src of node._overrides.when.sources()) visit(src);
+            }
         };
         for (const t of tasks) visit(t);
         return [...seen];

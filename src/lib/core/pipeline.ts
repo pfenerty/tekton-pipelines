@@ -7,6 +7,7 @@ import { Task, TaskLike, TaskDef } from './task';
 import { TRIGGER_EVENTS } from './trigger-events';
 import { triggerEvents } from './pac-trigger';
 import type { PipelineTrigger } from './pac-trigger';
+import { Condition } from './condition';
 import { applyOverrides, unwrapGated, GatedTask } from './pipeline-task';
 import type { PipelineTaskOverrides } from './pipeline-task';
 
@@ -64,6 +65,13 @@ export class Pipeline {
    * overrides they carried are applied here at spec-build time instead.
    */
   private readonly taskOverrides = new Map<TaskLike, PipelineTaskOverrides>();
+  /**
+   * Producing tasks of a `gated()` override's {@link Condition}, keyed by the gated task.
+   * `TaskDef` wires the sources of its own `when` into `needs`; a `gated()` override cannot
+   * do that without mutating a task shared between pipelines, so the pipeline carries the
+   * edge instead — the sources are discovered and become `runAfter` entries.
+   */
+  private readonly overrideSources = new Map<TaskLike, TaskLike[]>();
   /** @internal Auto-generated task that sets all status contexts to pending at pipeline start. */
   protected readonly _pendingTask?: TaskDef;
 
@@ -123,7 +131,7 @@ export class Pipeline {
       const t = this.registerOverrides(node);
       if (seen.has(t)) return;
       seen.add(t);
-      for (const dep of t.needs) visit(dep);
+      for (const dep of this.dependenciesOf(t)) visit(dep);
     };
     for (const t of tasks) visit(t);
     return [...seen];
@@ -145,7 +153,20 @@ export class Pipeline {
       );
     }
     this.taskOverrides.set(task, node._overrides);
+    if (node._overrides.when instanceof Condition) {
+      this.overrideSources.set(task, node._overrides.when.sources().map(unwrapGated));
+    }
     return task;
+  }
+
+  /**
+   * Graph edges into `task`: its own `needs` plus the producing tasks of any `gated()`
+   * override condition, which the task itself does not know about.
+   */
+  private dependenciesOf(task: TaskLike): TaskLike[] {
+    const needs = task.needs.map(unwrapGated);
+    const sources = this.overrideSources.get(task) ?? [];
+    return [...needs, ...sources.filter(s => !needs.includes(s))];
   }
 
   /**
@@ -245,8 +266,7 @@ export class Pipeline {
    * Override in subclasses to inject additional ordering constraints.
    */
   protected runAfterFor(task: TaskLike): string[] {
-    let names = task.needs
-      .map(unwrapGated)
+    let names = this.dependenciesOf(task)
       .filter(dep => this.allTasks.includes(dep))
       .map(dep => dep.name);
     if (this._pendingTask && task instanceof TaskDef && task.statusContext && task.statusReporter && task !== this._pendingTask) {
@@ -277,7 +297,7 @@ export class Pipeline {
       }
       nameSet.add(task.name);
 
-      for (const dep of task.needs.map(unwrapGated)) {
+      for (const dep of this.dependenciesOf(task)) {
         if (!taskSet.has(dep)) {
           throw new Error(
             `Pipeline '${this.name}': task '${task.name}' depends on '${dep.name}' which is not in the pipeline`,
@@ -300,7 +320,7 @@ export class Pipeline {
         );
       }
       visiting.add(task);
-      for (const dep of task.needs.map(unwrapGated)) {
+      for (const dep of this.dependenciesOf(task)) {
         visit(dep);
       }
       visiting.delete(task);

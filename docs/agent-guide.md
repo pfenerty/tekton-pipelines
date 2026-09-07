@@ -582,6 +582,10 @@ too: the pipeline emits one entry for it, carrying the overrides, with its `runA
 both directions intact. Gating the same task twice in one pipeline with different overrides is
 an error.
 
+When the override's `when` is a `Condition` bound to a task result (e.g. `onChanges([...])`),
+the producing task is discovered into the pipeline and becomes a `runAfter` edge automatically,
+matching what the `when` **task attribute** does via `needs` — no manual detection-task list.
+
 **PipelineTaskOverrides:**
 
 | Field | Type | Description |
