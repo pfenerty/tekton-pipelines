@@ -7,6 +7,8 @@ import type { ScriptLanguage, ScriptCtx } from './types';
 
 export type { ScriptLanguage, ScriptCtx } from './types';
 export { EXIT_CODE_PATH, stepExitCodePath } from './types';
+export { embedSh } from './embed';
+export type { EmbedShOptions } from './embed';
 export { Sh } from './sh';
 export { Bash } from './bash';
 export { Nushell } from './nushell';
@@ -114,10 +116,58 @@ export function dedent(text: string): string {
   return lines.map((l) => l.slice(min)).join('\n');
 }
 
+/**
+ * A reusable piece of a script body, authored with its own natural indentation.
+ *
+ * A plain multi-line string interpolated into a tagged template keeps the column it was
+ * written at: its lines do not pick up the indentation of the interpolation site, and because
+ * {@link dedent} strips the *common* minimum, one flush-left fragment leaves every other line
+ * of the template indented. Fragment authors worked around that by writing shared snippets
+ * flush-left at column 0 — indentation as load-bearing convention, enforced by nothing.
+ *
+ * A `Fragment` is re-indented to wherever it is interpolated, so shared snippets can be
+ * written naturally and composed at any depth.
+ *
+ * @example
+ * ```ts
+ * const retry = fragment`
+ *   n=0
+ *   until [ $n -ge 3 ]; do "$@" && break; n=$((n+1)); sleep 5; done
+ * `;
+ *
+ * const body = sh`
+ *   set -e
+ *   ${retry}
+ *   retry curl -fsSL "$URL"
+ * `;
+ * ```
+ */
+export class Fragment {
+  constructor(readonly body: string) {}
+  toString(): string {
+    return this.body;
+  }
+}
+
+/** The indentation of the line currently being built, used to re-indent a {@link Fragment}. */
+function currentIndent(text: string): string {
+  const line = text.slice(text.lastIndexOf('\n') + 1);
+  return /^[ \t]*$/.test(line) ? line : '';
+}
+
 function interpolate(strings: TemplateStringsArray, values: unknown[]): string {
   let out = '';
   strings.forEach((s, i) => {
-    out += s + (i < values.length ? String(values[i]) : '');
+    out += s;
+    if (i >= values.length) return;
+    const value = values[i];
+    if (value instanceof Fragment) {
+      // Re-indent every line but the first, which already sits at the interpolation column.
+      const indent = currentIndent(out);
+      out += value.body.split('\n').join(`\n${indent}`);
+      return;
+    }
+    out += String(value);
   });
   return out;
 }
@@ -125,6 +175,15 @@ function interpolate(strings: TemplateStringsArray, values: unknown[]): string {
 function tag(language: ScriptLanguage) {
   return (strings: TemplateStringsArray, ...values: unknown[]): Script =>
     new Script(language, dedent(interpolate(strings, values)));
+}
+
+/**
+ * Tagged-template helper authoring a reusable {@link Fragment} of script, dedented on its own
+ * and re-indented wherever it is interpolated. Fragments compose: a fragment may interpolate
+ * other fragments.
+ */
+export function fragment(strings: TemplateStringsArray, ...values: unknown[]): Fragment {
+  return new Fragment(dedent(interpolate(strings, values)));
 }
 
 /** Tagged-template helper authoring a POSIX sh step body, e.g. ``sh`echo hi` ``. */

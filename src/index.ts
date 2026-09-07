@@ -55,9 +55,9 @@ export { TRIGGER_EVENTS } from "./lib/core/trigger-events";
 export type { StatusReporter } from "./lib/core/status-reporter";
 
 // Scripting
-export { sh, bash, nu, py, script, Script, rawScript, RawScript, unsafeAllowExit, languageFor, dedent, renderScript, Sh, Bash, Nushell, Python, EXIT_CODE_PATH } from "./lib/script";
+export { sh, bash, nu, py, script, Script, fragment, Fragment, embedSh, rawScript, RawScript, unsafeAllowExit, languageFor, dedent, renderScript, Sh, Bash, Nushell, Python, EXIT_CODE_PATH } from "./lib/script";
 export { scriptFromFile, lintCommandForFile, languageNameForFile } from "./lib/script/from-file";
-export type { ScriptLanguage, ScriptCtx, ScriptInput, ScriptObject, ScriptOptions, LanguageName } from "./lib/script";
+export type { ScriptLanguage, ScriptCtx, ScriptInput, ScriptObject, ScriptOptions, EmbedShOptions, LanguageName } from "./lib/script";
 
 // Reporters
 export { GitHubStatusReporter, statusParam } from "./lib/reporters/github-status-reporter";

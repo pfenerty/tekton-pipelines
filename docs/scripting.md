@@ -204,6 +204,77 @@ script: rawScript(`#!/usr/bin/env ruby\n# this step owns its own exit-code handl
 Outside a reporting task a raw `#!` string still passes through unchanged — there is no contract
 to lose.
 
+## Composing bodies from fragments
+
+Shared snippets are `fragment` tags, not plain strings. A plain multi-line string interpolated
+into a template keeps the column it was written at, and because `dedent` strips the *common*
+minimum indentation, one flush-left snippet leaves every other line of the template indented —
+which is why hand-written snippet libraries had to be authored flush-left at column 0, with the
+convention enforced by nothing but a comment.
+
+A `fragment` is dedented on its own and **re-indented wherever it is interpolated**, at any
+depth, and fragments compose:
+
+```typescript
+import { fragment, sh } from '@pfenerty/tektonic';
+
+const retry = fragment`
+  n=0
+  until [ $n -ge 3 ]; do "$@" && break; n=$((n+1)); sleep 5; done
+`;
+
+script: sh`
+  set -e
+  retry() {
+    ${retry}
+  }
+  retry curl -fsSL "$URL"
+`
+```
+
+## Embedding a shell body in nushell
+
+Some work is shell work — a `trap`, a polling loop over a cgroup file, a tool that expects to be
+`exec`'d from `sh`. `embedSh` embeds a POSIX `sh` body inside a nushell script as a fragment:
+
+```typescript
+import { embedSh, nu } from '@pfenerty/tektonic';
+
+const watchdog = embedSh(
+  `limit=$1
+   while :; do
+     used=$(cat /sys/fs/cgroup/memory.current)
+     [ "$used" -gt "$limit" ] && exit 99
+     sleep 5
+   done`,
+  { args: [memoryLimitBytes] },
+);
+
+script: nu`
+  ${watchdog}
+  log "watchdog exited"
+`
+```
+
+The body goes into a nushell **raw string**, so nushell never looks inside it — which is why
+values cannot be interpolated across the boundary and are passed as positional parameters
+(`$1`, `$2`, `"$@"`) instead. `args` accepts anything stringifiable, so a `Param` or `Result`
+renders its Tekton expression and is double-quoted for you. The raw-string fence widens
+automatically if the body contains one. `exit` codes inside the body belong to the embedded
+`sh` process: they do not touch the exit-code contract, and the nushell `exit` guard ignores
+them.
+
+### Two interpolation traps
+
+- **Bare parentheses in an interpolated nushell string.** Inside `$"…"`, `(…)` is an
+  expression to evaluate. A value that may contain parentheses (a commit subject, say) must not
+  be interpolated into `$"…"` — bind it with `let` from a plain `"…"` string first.
+- **`$(...)` collides with Tekton.** Tekton substitutes its own `$(params.…)`,
+  `$(workspaces.…)` and `$(results.…)` before the script ever runs, so shell command
+  substitution written as `$(cmd)` reads as a Tekton variable to anyone scanning the manifest,
+  and to Tekton's own validation for prefixes it recognises. Prefer backticks in `sh` bodies,
+  or nushell's own `(cmd)` evaluation.
+
 ## Testing scripts
 
 > Testing whole **pipelines** — graph shape, gating, params — is covered in
