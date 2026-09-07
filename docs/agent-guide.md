@@ -331,6 +331,17 @@ in the pipeline mounts defaults to `skipRestoreIfPathsExist: true`, with a warni
 task and workspace: a swap is atomic, but it still replaces a warm tree the other task just
 populated. Set `skipRestoreIfPathsExist` explicitly (either value) to take that decision back
 and silence the warning.
+### Task names are project-wide
+
+`TektonicProject` emits one Task manifest per task **name** and every pipeline references it by
+that name. Two distinct tasks that share a name must therefore declare the same thing: if their
+synthesized specs differ, synthesis fails naming both pipelines, the manifest they collapse into,
+and the differing fields.
+
+This bites most often with `GitPipeline`, which generates its own `git-clone` per pipeline — so
+`cloneDepth`, `cloneImage` and `chainsProvenance` must agree across every `GitPipeline` in a
+project. Give one of them a distinct task name if they genuinely need to differ.
+
 ## GitHub Status Reporting
 
 ```typescript

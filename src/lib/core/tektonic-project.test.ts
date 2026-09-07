@@ -339,3 +339,76 @@ describe('Pipeline.events', () => {
     expect(p.events).toEqual([TRIGGER_EVENTS.PUSH, TRIGGER_EVENTS.PULL_REQUEST]);
   });
 });
+
+describe('same-named tasks across pipelines', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    capturedCharts.length = 0;
+  });
+
+  const gitPipeline = (name: string, event: TRIGGER_EVENTS, opts: Record<string, unknown> = {}) =>
+    new GitPipeline({
+      name,
+      trigger: { rules: [{ on: event }] },
+      tasks: [new Task({ name: `work-${name}`, steps: [{ name: 's', image: 'alpine' }] })],
+      ...opts,
+    });
+
+  // Each GitPipeline generates its own git-clone Task, but only one is emitted and all
+  // pipelines reference it by name — so identical declarations must keep deduping silently.
+  it('dedupes identical auto-generated git-clone tasks', () => {
+    expect(
+      () =>
+        new TektonicProject({
+          namespace: 'ci',
+          pipelines: [gitPipeline('push', TRIGGER_EVENTS.PUSH), gitPipeline('pr', TRIGGER_EVENTS.PULL_REQUEST)],
+        }),
+    ).not.toThrow();
+  });
+
+  it('rejects two git-clone tasks that differ in cloneDepth', () => {
+    expect(
+      () =>
+        new TektonicProject({
+          namespace: 'ci',
+          pipelines: [
+            gitPipeline('push', TRIGGER_EVENTS.PUSH, { cloneDepth: 'full' }),
+            gitPipeline('pr', TRIGGER_EVENTS.PULL_REQUEST),
+          ],
+        }),
+    ).toThrow(/task 'git-clone' is declared differently in pipelines 'push' and 'pr'/);
+  });
+
+  it('names the differing fields and the manifest they collapse into', () => {
+    let message = '';
+    try {
+      new TektonicProject({
+        name: 'demo',
+        namespace: 'ci',
+        pipelines: [
+          gitPipeline('push', TRIGGER_EVENTS.PUSH, { cloneImage: 'alpine/git:latest' }),
+          gitPipeline('pr', TRIGGER_EVENTS.PULL_REQUEST),
+        ],
+      });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("single Task 'demo-git-clone'");
+    expect(message).toContain('spec.steps[0].image');
+  });
+
+  it('rejects two user tasks that share a name but differ', () => {
+    const a = new Task({ name: 'lint', steps: [{ name: 's', image: 'golangci-lint:1' }] });
+    const b = new Task({ name: 'lint', steps: [{ name: 's', image: 'golangci-lint:2' }] });
+    expect(
+      () =>
+        new TektonicProject({
+          namespace: 'ci',
+          pipelines: [
+            new Pipeline({ name: 'push', trigger: { rules: [{ on: TRIGGER_EVENTS.PUSH }] }, tasks: [a] }),
+            new Pipeline({ name: 'pr', trigger: { rules: [{ on: TRIGGER_EVENTS.PULL_REQUEST }] }, tasks: [b] }),
+          ],
+        }),
+    ).toThrow(/task 'lint' is declared differently/);
+  });
+});

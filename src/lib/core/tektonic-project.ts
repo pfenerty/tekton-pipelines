@@ -9,6 +9,7 @@ import { triggerAnnotations } from './pac-trigger';
 import { TEKTON_API_V1, PAC_API, DEFAULT_POD_SECURITY_CONTEXT } from '../constants';
 import type { CacheBackend } from './cache-backend';
 import type { LanguageName } from '../script';
+import { diffPaths } from './spec-diff';
 
 /**
  * Environment variables the `tektonic` CLI sets on the process that runs a project entrypoint.
@@ -278,11 +279,46 @@ export class TektonicProject {
 
     const pvcCaches = (opts.caches ?? []).filter(c => c.backend?.type !== 'gcs');
 
+    // Every task is emitted once, keyed by name, and every pipeline references it by that
+    // name — so two distinct tasks sharing a name must declare the same thing, or one
+    // pipeline would run a manifest it never declared. GitPipeline makes this easy to hit:
+    // each one generates its own git-clone, and a differing cloneDepth used to vanish.
+    const synthArgs = [
+      namespace,
+      prefix || undefined,
+      opts.defaultStepSecurityContext,
+      opts.defaultLanguage,
+      opts.defaultImagePullPolicy,
+    ] as const;
+    const specOf = (task: TaskDef): Record<string, unknown> => {
+      const chart = new Chart(new App(), task.name);
+      task.synth(chart, ...synthArgs);
+      return chart.toJson()[0] as Record<string, unknown>;
+    };
+
     // 1. Collect unique tasks across all pipelines (including finally tasks)
     const uniqueTasks = new Map<string, TaskLike>();
+    const declaringPipeline = new Map<string, string>();
     for (const pipeline of opts.pipelines) {
       for (const task of [...pipeline.allTasks, ...pipeline.finallyTasks]) {
-        if (!uniqueTasks.has(task.name)) uniqueTasks.set(task.name, task);
+        const existing = uniqueTasks.get(task.name);
+        if (existing === undefined) {
+          uniqueTasks.set(task.name, task);
+          declaringPipeline.set(task.name, pipeline.name);
+          continue;
+        }
+        if (existing === task) continue;
+        if (!(existing instanceof TaskDef) || !(task instanceof TaskDef)) continue;
+        const differences = diffPaths(specOf(existing), specOf(task));
+        if (differences.length === 0) continue;
+        const emittedName = prefix ? `${prefix}-${task.name}` : task.name;
+        throw new Error(
+          `TektonicProject: task '${task.name}' is declared differently in pipelines ` +
+            `'${declaringPipeline.get(task.name)}' and '${pipeline.name}', but both are emitted as a ` +
+            `single Task '${emittedName}' — one pipeline would run a manifest it did not declare. ` +
+            `Differing fields: ${differences.join(', ')}. ` +
+            `Give the tasks distinct names, or make the two declarations identical.`,
+        );
       }
     }
 
