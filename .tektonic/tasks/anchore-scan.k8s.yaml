@@ -29,13 +29,17 @@ spec:
     - env:
         - name: CLOUDSDK_CONFIG
           value: /tekton/home/.config/gcloud
-      image: ghcr.io/pfenerty/apko-cicd/gcloud:579.0.0
+      image: ghcr.io/pfenerty/apko-cicd/gcloud:563.0.0
       name: restore-grype-db-cache
       script: |-
         #!/usr/bin/env nu
         def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
         let hash = ("" | hash sha256 | str substring 0..15)
         $hash | save -f /tekton/home/.cache-grype-db-hash
+        if (["grype-db"] | any { |p| $p | path exists }) {
+          log $"restore-grype-db-cache: paths already exist, skipping restore ($hash)"
+          exit 0
+        }
 
         let object = $"grype/($hash).tar.zst"
         let gcs_url = $"gs://tektonic-ci-cache/($object)"
@@ -48,13 +52,37 @@ spec:
             | lines | first | str trim | split words | first | into int
           )
           log $"restore-grype-db-cache: hit ($hash) size=(($size / 1_000_000) | math round --precision 1)MB"
-          let cache_paths = ["grype-db"]
-          for p in $cache_paths {
-            if ($p | path exists) { ^chmod -R u+w $p; rm -rf $p }
-          }
           log "restore-grype-db-cache: downloading ..."
           let t0 = (date now)
-          ^gcloud --verbosity=error storage cp $gcs_url - | ^zstd -d -T0 -c | ^tar xf - -o --no-same-permissions
+          let stage = $".cache-restore-(random uuid)"
+          mkdir $stage
+          try {
+            ^gcloud --verbosity=error storage cp $gcs_url - | ^zstd -d -T0 -c | ^tar xf - -C $stage -o --no-same-permissions
+          } catch { |e|
+            rm -rf $stage
+            log $"restore-grype-db-cache: extract failed \(($e.msg)\)"
+            exit 1
+          }
+          for p in ["grype-db"] {
+            let staged = ($stage | path join $p)
+            if not ($staged | path exists) { continue }
+            if ($p | path exists) {
+              # Rename the live tree aside and move the new one in — never delete in place. The
+              # displaced tree is removed afterwards and best-effort: a concurrent writer still inside
+              # it can legitimately make that fail, and by then nothing resolves to it by path.
+              let displaced = $"($p).displaced-(random uuid)"
+              mv $p $displaced
+              mv $staged $p
+              try { ^chmod -R u+w $displaced; rm -rf $displaced } catch { |e|
+                log $"restore-grype-db-cache: displaced tree ($displaced) not removed: ($e.msg)"
+              }
+            } else {
+              let parent = ($p | path dirname)
+              if (($parent | str length) > 0) and ($parent != ".") { mkdir $parent }
+              mv $staged $p
+            }
+          }
+          rm -rf $stage
           let elapsed = (((date now) - $t0) | into int) / 1_000_000_000
           let speed = (if $elapsed > 0 { ($size / 1_000_000) / $elapsed | math round --precision 1 } else { 0 })
           log $"restore-grype-db-cache: restored in ($elapsed)s ($speed) MB/s"
@@ -88,7 +116,7 @@ spec:
     - env:
         - name: GRYPE_DB_CACHE_DIR
           value: $(workspaces.workspace.path)/grype-db
-      image: ghcr.io/pfenerty/apko-cicd/grype:0.116.1
+      image: ghcr.io/pfenerty/apko-cicd/grype:0.110.0
       name: scan
       onError: continue
       script: |-
@@ -160,7 +188,7 @@ spec:
     - env:
         - name: CLOUDSDK_CONFIG
           value: /tekton/home/.config/gcloud
-      image: ghcr.io/pfenerty/apko-cicd/gcloud:579.0.0
+      image: ghcr.io/pfenerty/apko-cicd/gcloud:563.0.0
       name: save-grype-db-cache
       onError: continue
       script: |-
@@ -223,7 +251,10 @@ spec:
       script: |-
         #!/usr/bin/env nu
         def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
-        let exit_code = (try { open --raw /tekton/home/.exit-code | str trim | into int } catch { 1 })
+        let contract_code = (try { open --raw /tekton/home/.exit-code | str trim | into int } catch { 1 })
+        # A step that never ran has no file; 0 keeps it out of the max.
+        let step_codes = (["/tekton/steps/step-generate-sbom/exitCode" "/tekton/steps/step-scan/exitCode" "/tekton/steps/step-upload-sarif/exitCode"] | each { |p| try { open --raw $p | str trim | into int } catch { 0 } })
+        let exit_code = ([$contract_code ...$step_codes] | math max)
         let state = if $exit_code == 0 { "success" } else { "failure" }
         let desc = if $exit_code == 0 { "Passed" } else { "Failed" }
 

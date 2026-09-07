@@ -86,10 +86,24 @@ import { scriptFromFile } from '@pfenerty/tektonic';
 steps: [{ name: 'fmt', image: goImage, script: scriptFromFile(path.join(__dirname, 'fmt.nu')) }]
 ```
 
+## CLI
+
+Installing the package also provides a `tektonic` binary that drives your project definition:
+
+```bash
+npx tektonic synth     # write the manifests
+npx tektonic check     # fail if the committed output is stale, missing or orphaned
+npx tektonic graph     # print the task DAG (--format mermaid for a flowchart)
+npx tektonic lint      # shellcheck / nu-check / py_compile over your script files
+```
+
+See [docs/cli.md](docs/cli.md).
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md) — build a complete pipeline end to end
 - [Agent guide](docs/agent-guide.md) — full API reference with examples
+- [CLI](docs/cli.md) — `tektonic synth`, `check`, `graph`, `lint`
 - [Scripting](docs/scripting.md) — language tags, `scriptFromFile`, the exit-code contract, testing
 - [Caching](docs/caching.md) — PVC & GCS caches, compression, save strategies
 - [Secrets & security](docs/secrets.md) — env/file secret injection and security defaults

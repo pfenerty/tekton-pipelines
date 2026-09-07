@@ -66,7 +66,7 @@ Two patterns dominate (both detailed in [docs/architecture.md](docs/architecture
   `src/lib/script/runtime.test.ts`; guard each case with `it.skipIf(!has(interpreter))` so the
   suite stays hermetic.
 
-Run `npm run lint:scripts` to syntax-check any `.sh`/`.bash`/`.nu`/`.py` files under `src/`.
+Run `tektonic lint` (or `npm run lint:scripts`) to syntax-check any `.sh`/`.bash`/`.nu`/`.py` files under `src/`.
 
 ## Pull requests
 

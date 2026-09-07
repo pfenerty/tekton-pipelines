@@ -26,6 +26,7 @@ spec:
     - env: []
       image: ghcr.io/pfenerty/apko-cicd/base:stable
       name: pending-test-npm
+      onError: continue
       script: |-
         #!/usr/bin/env nu
         def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
@@ -48,6 +49,7 @@ spec:
     - env: []
       image: ghcr.io/pfenerty/apko-cicd/base:stable
       name: pending-anchore-scan
+      onError: continue
       script: |-
         #!/usr/bin/env nu
         def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }

@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { App, ApiObject, Chart } from 'cdk8s';
 import { Pipeline } from './pipeline';
 import { TaskLike, TaskDef } from './task';
@@ -7,6 +9,64 @@ import { triggerAnnotations } from './pac-trigger';
 import { TEKTON_API_V1, PAC_API, DEFAULT_POD_SECURITY_CONTEXT } from '../constants';
 import type { CacheBackend } from './cache-backend';
 import type { LanguageName } from '../script';
+
+/**
+ * Environment variables the `tektonic` CLI sets on the process that runs a project entrypoint.
+ * They exist so `tektonic check` and `tektonic graph` can redirect and inspect a synthesis the
+ * consumer's own code drives, without that code knowing anything about the CLI — previously
+ * every consumer threaded its own outdir env var through the project definition to make a
+ * drift check possible.
+ */
+export const CLI_ENV = {
+  /** Root directory synthesis is redirected under. Each project gets a subdirectory of it. */
+  outdir: 'TEKTONIC_OUTDIR',
+  /** File the redirect mapping (`{declared, actual}` per project) is appended to as JSON lines. */
+  synthManifest: 'TEKTONIC_SYNTH_MANIFEST',
+  /** File the pipeline graph is appended to as JSON lines. */
+  graphManifest: 'TEKTONIC_GRAPH_MANIFEST',
+} as const;
+
+/**
+ * The directory a project actually writes to. Unchanged unless the CLI asked for a redirect,
+ * in which case the declared path becomes a subdirectory of the redirect root — flattened, so
+ * an outdir outside the repo (`../.tekton`) cannot escape it — and the mapping is recorded for
+ * the CLI to diff against.
+ */
+function redirectedOutdir(declared: string): string {
+  const root = process.env[CLI_ENV.outdir];
+  if (!root) return declared;
+  const actual = path.join(root, declared.replace(/[^A-Za-z0-9._-]+/g, '_') || 'out');
+  const manifest = process.env[CLI_ENV.synthManifest];
+  if (manifest) fs.appendFileSync(manifest, `${JSON.stringify({ declared, actual })}\n`);
+  return actual;
+}
+
+/** One task node in a {@link PipelineGraph}, as rendered by `tektonic graph`. */
+export interface GraphNode {
+  name: string;
+  runAfter: string[];
+  /** True when the task carries a `when` guard, so the graph can mark it conditional. */
+  gated: boolean;
+}
+
+/** One pipeline's shape, emitted for the CLI's `graph` command. */
+export interface PipelineGraph {
+  name: string;
+  events: string[];
+  timeout?: string;
+  tasks: GraphNode[];
+  finally: GraphNode[];
+}
+
+/** Reduces built pipeline task specs to the fields `tektonic graph` renders. */
+function graphNodes(specs: unknown): GraphNode[] {
+  if (!Array.isArray(specs)) return [];
+  return (specs as Record<string, unknown>[]).map(t => ({
+    name: String(t.name),
+    runAfter: Array.isArray(t.runAfter) ? (t.runAfter as string[]) : [],
+    gated: Array.isArray(t.when) && t.when.length > 0,
+  }));
+}
 
 /**
  * Specifies a persistent cache volume bound into every PipelineRun. The generated
@@ -200,8 +260,12 @@ export interface TektonicProjectOptions {
  */
 export class TektonicProject {
   constructor(opts: TektonicProjectOptions) {
-    const outdir = opts.outdir ?? '.tekton';
-    const repoRelativePath = opts.repoRelativePath ?? outdir;
+    // The declared outdir stays the source of truth for `repoRelativePath`: a redirected
+    // synthesis must emit byte-identical YAML, or a drift check would compare against
+    // annotations that name the temp directory.
+    const declaredOutdir = opts.outdir ?? '.tekton';
+    const outdir = redirectedOutdir(declaredOutdir);
+    const repoRelativePath = opts.repoRelativePath ?? declaredOutdir;
     const prefix = opts.name ?? '';
     const namespace = opts.namespace;
     const serviceAccountName = opts.serviceAccountName ?? 'tekton-triggers';
@@ -252,6 +316,7 @@ export class TektonicProject {
 
     // 4. Synthesize a PAC PipelineRun template per triggered pipeline
     const runApp = new App({ outdir });
+    const graph: PipelineGraph[] = [];
     for (const pipeline of opts.pipelines) {
       if (!pipeline.trigger || pipeline.events.length === 0) continue;
 
@@ -290,6 +355,14 @@ export class TektonicProject {
         };
       });
 
+      graph.push({
+        name: pipeline.name,
+        events: [...pipeline.events],
+        ...(pipeline.timeout ? { timeout: pipeline.timeout } : {}),
+        tasks: graphNodes(pipelineSpec.tasks),
+        finally: graphNodes(pipelineSpec.finally),
+      });
+
       const pipelineRunName = prefix ? `${prefix}-${pipeline.name}` : pipeline.name;
       const chartId = prefix ? `${prefix}-${pipeline.name}` : pipeline.name;
 
@@ -322,6 +395,14 @@ export class TektonicProject {
           workspaces,
         },
       });
+    }
+
+    const graphManifest = process.env[CLI_ENV.graphManifest];
+    if (graphManifest) {
+      fs.appendFileSync(
+        graphManifest,
+        `${JSON.stringify({ project: prefix || undefined, outdir: declaredOutdir, pipelines: graph })}\n`,
+      );
     }
 
     // Optional PAC Repository CR linking this repo to the namespace (+ provider).

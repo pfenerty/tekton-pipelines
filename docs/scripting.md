@@ -200,7 +200,7 @@ interpreter is unavailable so the suite stays hermetic (`it.skipIf(!has('nu'))`)
 
 ### Lint harness
 
-`npm run lint:scripts` walks every `.sh`/`.bash`/`.nu`/`.py` file under `src/` and runs the
+`tektonic lint` (or `npm run lint:scripts`) walks every `.sh`/`.bash`/`.nu`/`.py` file under `src/` and runs the
 per-language lint command (`shellcheck`, `nu-check`, `py_compile`). It skips gracefully when a
 linter isn't installed and fails only on real syntax errors. The command chooser is exported
 as `lintCommandForFile(filePath, { language? })` if you want to build your own harness over a

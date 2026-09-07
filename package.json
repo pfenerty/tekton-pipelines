@@ -15,6 +15,9 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "bin": {
+    "tektonic": "./dist/cli/index.js"
+  },
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
@@ -27,7 +30,7 @@
     "build:watch": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint:scripts": "npm run build && node scripts/lint-scripts.cjs",
+    "lint:scripts": "npm run build && node dist/cli/index.js lint",
     "docs:api": "typedoc",
     "synth": "npx cdk8s synth",
     "import": "npx cdk8s import",

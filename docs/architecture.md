@@ -162,5 +162,5 @@ dominate:
   (`src/lib/script/runtime.test.ts`). Guard each case with `it.skipIf(!has(interpreter))` to keep
   the suite hermetic.
 
-Run `npm test`, and `npm run lint:scripts` to lint any `.sh`/`.bash`/`.nu`/`.py` files under
+Run `npm test`, and `tektonic lint` (or `npm run lint:scripts`) to lint any `.sh`/`.bash`/`.nu`/`.py` files under
 `src/`.
