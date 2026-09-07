@@ -155,7 +155,7 @@ two copies of tektonic mean two incompatible `Task` classes.
 
 ```json
 {
-  "peerDependencies": { "@pfenerty/tektonic": "^1.4.0" },
-  "devDependencies": { "@pfenerty/tektonic": "^1.4.0" }
+  "peerDependencies": { "@pfenerty/tektonic": "^2.0.0" },
+  "devDependencies": { "@pfenerty/tektonic": "^2.0.0" }
 }
 ```
