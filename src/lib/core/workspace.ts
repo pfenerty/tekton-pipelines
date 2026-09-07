@@ -34,6 +34,22 @@ export class Workspace {
     return `$(workspaces.${this.name}.path)`;
   }
 
+  /**
+   * Returns a path inside the workspace, e.g. `ws.at('.go-mod')` →
+   * `$(workspaces.source.path)/.go-mod`. Segments are joined with `/`, and leading and
+   * trailing slashes on each segment are ignored, so `ws.at('/a/', '/b')` is `…/a/b`.
+   *
+   * Preferable to string concatenation for cache paths, `workingDir`s and script
+   * interpolation: the workspace name stays in one place.
+   */
+  at(...segments: string[]): string {
+    const parts = segments
+      .flatMap(s => s.split('/'))
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && s !== '.');
+    return parts.length ? `${this.path}/${parts.join('/')}` : this.path;
+  }
+
   /** Returns the Tekton interpolation expression that evaluates to `"true"` when the workspace is bound. */
   get bound(): string {
     return `$(workspaces.${this.name}.bound)`;

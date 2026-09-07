@@ -1,10 +1,10 @@
 import {
-    Param,
     Task,
     GitPipeline,
     TektonicProject,
     TRIGGER_EVENTS,
     GitHubStatusReporter,
+    PAC_PARAMS,
     DEFAULT_BASE_IMAGE,
     gcs,
     sh,
@@ -17,10 +17,11 @@ const syftImage = "ghcr.io/pfenerty/apko-cicd/syft:1.42.3";
 const grypeImage = "ghcr.io/pfenerty/apko-cicd/grype:0.110.0";
 
 // ─── Params ──────────────────────────────────────────────────────────────────
-// PAC binds `source-branch` to {{ source_branch }} — the normalized branch name.
-const sourceBranchParam = new Param({ name: "source-branch", type: "string" });
-// PAC binds `source-branch` to the pushed ref; for a tag push that is the tag name.
-const tagNameParam = sourceBranchParam;
+// The PAC-injected params are typed handles rather than hand-declared Params plus raw
+// `$(params.…)` strings — the project binds them on every PipelineRun. For a tag push,
+// `sourceBranch` carries the tag ref.
+const sourceBranchParam = PAC_PARAMS.sourceBranch;
+const tagNameParam = PAC_PARAMS.sourceBranch;
 
 // ─── Status reporter ─────────────────────────────────────────────────────────
 // Under PAC, reuse the git-auth token via the pod env (see podTemplateEnv below)
@@ -92,7 +93,7 @@ const npmBuild = new Task({
 
 const anchoreScann = new Task({
     name: "anchore-scan",
-    params: [sourceBranchParam],
+    params: [sourceBranchParam, PAC_PARAMS.repoFullName, PAC_PARAMS.revision],
     statusReporter,
     caches: [
         {
@@ -179,9 +180,9 @@ const anchoreScann = new Task({
                 let sarif_b64 = (open --raw scan.sarif | ^gzip -c | encode base64)
                 log $"upload-sarif: payload: (($sarif_b64 | str length) / 1024 | math round)KB base64"
 
-                let url = "https://api.github.com/repos/$(params.repo-full-name)/code-scanning/sarifs"
+                let url = "https://api.github.com/repos/${PAC_PARAMS.repoFullName}/code-scanning/sarifs"
                 let body = {
-                  commit_sha: "$(params.revision)",
+                  commit_sha: "${PAC_PARAMS.revision}",
                   ref: $ref,
                   sarif: $sarif_b64,
                 }

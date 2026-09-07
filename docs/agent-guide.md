@@ -342,6 +342,42 @@ This bites most often with `GitPipeline`, which generates its own `git-clone` pe
 `cloneDepth`, `cloneImage` and `chainsProvenance` must agree across every `GitPipeline` in a
 project. Give one of them a distinct task name if they genuinely need to differ.
 
+### PAC params and workspace paths, typed
+
+The params Pipelines as Code fills in for every run are exported as `PAC_PARAMS`, so a task can
+take one directly instead of declaring a matching `Param` and hand-writing `$(params.…)` into a
+script — where a typo is a template that silently never substitutes.
+
+```typescript
+import { PAC_PARAMS, nu, Task } from '@pfenerty/tektonic';
+
+new Task({
+  name: 'notify',
+  params: [PAC_PARAMS.repoFullName, PAC_PARAMS.revision],
+  steps: [{ name: 'notify', image, script: nu`log $"${PAC_PARAMS.repoFullName} @ ${PAC_PARAMS.revision}"` }],
+});
+```
+
+| Handle | Param name | PAC source |
+|--------|-----------|------------|
+| `PAC_PARAMS.url` | `url` | `repo_url` |
+| `PAC_PARAMS.revision` | `revision` | `revision` |
+| `PAC_PARAMS.projectName` | `project-name` | `repo_name` |
+| `PAC_PARAMS.repoFullName` | `repo-full-name` | `repo_owner`/`repo_name` |
+| `PAC_PARAMS.sourceBranch` | `source-branch` | `source_branch` (the tag ref on a tag push) |
+
+`TektonicProject` declares and binds `project-name`, `repo-full-name` and `source-branch` on
+every emitted PipelineRun (`PAC_INJECTED_PARAMS`); `url` and `revision` come from the tasks that
+use them, `GitPipeline`'s `git-clone` among them.
+
+Workspace paths compose the same way — `ws.at('.go-mod')` renders
+`$(workspaces.<name>.path)/.go-mod`, keeping the workspace name in one place:
+
+```typescript
+caches: [{ name: 'go', key: ['go.sum'], paths: ['.go-mod'], workingDir: ws.path }],
+env: [{ name: 'GOMODCACHE', value: ws.at('.go-mod') }],
+```
+
 ## GitHub Status Reporting
 
 ```typescript

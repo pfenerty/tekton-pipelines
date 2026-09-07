@@ -5,11 +5,14 @@ metadata:
   namespace: tektonic-ci
 spec:
   params:
-    - name: source-branch
+    - description: Branch or tag ref of the event, bound by PAC from source_branch
+      name: source-branch
       type: string
-    - name: repo-full-name
+    - description: Repository owner/name, bound by PAC from repo_owner and repo_name
+      name: repo-full-name
       type: string
-    - name: revision
+    - description: Commit SHA, bound by PAC from revision
+      name: revision
       type: string
   stepTemplate:
     computeResources:

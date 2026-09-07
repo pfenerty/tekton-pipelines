@@ -10,6 +10,7 @@ import { TEKTON_API_V1, PAC_API, DEFAULT_POD_SECURITY_CONTEXT } from '../constan
 import type { CacheBackend } from './cache-backend';
 import type { LanguageName } from '../script';
 import { diffPaths } from './spec-diff';
+import { PAC_PARAM_BINDINGS, PAC_INJECTED_PARAMS } from './pac-params';
 
 /**
  * Environment variables the `tektonic` CLI sets on the process that runs a project entrypoint.
@@ -123,20 +124,6 @@ export interface RepositoryConfig {
 }
 
 // Well-known pipeline params bound to PAC template variables
-const PAC_PARAM_BINDINGS: Record<string, string> = {
-  url: '{{ repo_url }}',
-  revision: '{{ revision }}',
-  'project-name': '{{ repo_name }}',
-  'repo-full-name': '{{ repo_owner }}/{{ repo_name }}',
-  'source-branch': '{{ source_branch }}',
-};
-
-const EXTRA_PIPELINE_PARAMS = [
-  { name: 'project-name', type: 'string' },
-  { name: 'repo-full-name', type: 'string' },
-  { name: 'source-branch', type: 'string' },
-];
-
 /** Options for {@link TektonicProject}. */
 export interface TektonicProjectOptions {
   /**
@@ -360,7 +347,10 @@ export class TektonicProject {
       const matchAnnotations = triggerAnnotations(pipeline.trigger);
 
       // Build the inlined pipeline spec (with auto-injected project-name / repo-full-name params)
-      const pipelineSpec = pipeline._buildSpec(EXTRA_PIPELINE_PARAMS, prefix || undefined);
+      const pipelineSpec = pipeline._buildSpec(
+        PAC_INJECTED_PARAMS.map(p => p.toSpec()),
+        prefix || undefined,
+      );
 
       // Bind all pipelineSpec params to PAC template variables
       const specParams = pipelineSpec.params as Array<{ name: string }>;
