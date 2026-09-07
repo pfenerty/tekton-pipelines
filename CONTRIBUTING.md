@@ -99,19 +99,33 @@ build, SBOM and vulnerability scan — still runs in Tekton on push and pull req
 
 ### One-time setup
 
-Trusted publishing is configured on an **existing** package, so the very first publish is manual:
+Trusted publishing is configured on a package that **already exists** — `npm trust` requires
+that too — so the very first publish is manual, and it needs an interactive 2FA challenge:
 
 ```bash
-npm login                       # a 2FA session, valid for two hours
-npm publish --access public     # first release only
+npm login                                    # a 2FA session, valid for two hours
+npm publish --access public --otp=123456     # first release only; code from your authenticator
 ```
 
-Then, on npmjs.com → the package → Settings → Trusted Publishers, add a GitHub Actions publisher
-for repository `pfenerty/tektonic` with workflow `publish.yml`. Every later release goes through
-the tag.
+The `--otp` is not optional. A web-login session alone gets
+`403 … Two-factor authentication or granular access token with bypass 2fa enabled is required`,
+and npm does not reliably prompt for the code. If the account's only 2FA method is a passkey or
+security key there is no code to pass — enroll an authenticator app under Account → Two-Factor
+Authentication first.
 
-> Classic automation tokens are not an option: npm revoked all of them in December 2025, and
-> granular tokens with write access now expire after at most 90 days.
+Then register the GitHub Actions publisher, either from the CLI (npm 11.10+, also 2FA-gated):
+
+```bash
+npm trust github --repo pfenerty/tektonic --file publish.yml --allow-publish
+```
+
+or on npmjs.com → the package → Settings → Trusted Publishers. Every release after that goes
+through the tag alone.
+
+> Tokens are not a fallback here. npm revoked all classic automation tokens in December 2025,
+> granular tokens with write access expire within 90 days, and since July 2026 a granular token
+> cannot publish at all, whatever its bypass-2FA setting. Interactive 2FA and trusted publishing
+> are the two remaining paths — which is why CI uses OIDC.
 
 ## Code conventions
 
