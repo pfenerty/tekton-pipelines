@@ -41,6 +41,9 @@ files underneath.
 npm install @pfenerty/tektonic cdk8s constructs
 ```
 
+Published to npmjs as a public package — no registry configuration or auth needed. Releases are
+cut by tagging `vX.Y.Z`; see [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
+
 ## Quick example
 
 ```typescript

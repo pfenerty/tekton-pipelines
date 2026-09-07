@@ -1,0 +1,130 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: tektonic-reconcile-status-npm-release
+  namespace: tektonic-ci
+spec:
+  params:
+    - name: repo-full-name
+      type: string
+    - name: revision
+      type: string
+    - name: status-publish-npm
+      type: string
+    - name: status-build-npm
+      type: string
+    - name: status-test-npm
+      type: string
+  stepTemplate:
+    computeResources:
+      limits:
+        cpu: "1"
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+  steps:
+    - env: []
+      image: ghcr.io/pfenerty/apko-cicd/base:stable
+      name: resolve-publish-npm
+      onError: continue
+      script: |-
+        #!/usr/bin/env nu
+        def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
+        let status = "$(params.status-publish-npm)"
+
+        if $status not-in ["None" "Failed"] {
+          log $"reconcile-status [publish-npm]: task status is ($status), nothing to resolve"
+          exit 0
+        }
+
+        let state = if $status == "None" { "success" } else { "failure" }
+        let desc = if $status == "None" { "Skipped" } else { "Failed or terminated" }
+
+        let url = $"https://api.github.com/repos/$(params.repo-full-name)/statuses/$(params.revision)"
+        let body = { state: $state, context: "publish-npm", description: $desc }
+
+        log $"reconcile-status [publish-npm]: task status is ($status), POST ($url)"
+        log $"reconcile-status [publish-npm]: body: ($body | to json -r)"
+
+        try {
+          http post $url $body -t application/json -H [
+            Authorization $"token ($env.GITHUB_TOKEN)"
+            Accept "application/vnd.github+json"
+          ]
+          log "reconcile-status [publish-npm]: done"
+        } catch { |e|
+          log $"reconcile-status [publish-npm]: error: ($e.msg)"
+          exit 1
+        }
+    - env: []
+      image: ghcr.io/pfenerty/apko-cicd/base:stable
+      name: resolve-build-npm
+      onError: continue
+      script: |-
+        #!/usr/bin/env nu
+        def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
+        let status = "$(params.status-build-npm)"
+
+        if $status not-in ["None" "Failed"] {
+          log $"reconcile-status [build-npm]: task status is ($status), nothing to resolve"
+          exit 0
+        }
+
+        let state = if $status == "None" { "success" } else { "failure" }
+        let desc = if $status == "None" { "Skipped" } else { "Failed or terminated" }
+
+        let url = $"https://api.github.com/repos/$(params.repo-full-name)/statuses/$(params.revision)"
+        let body = { state: $state, context: "build-npm", description: $desc }
+
+        log $"reconcile-status [build-npm]: task status is ($status), POST ($url)"
+        log $"reconcile-status [build-npm]: body: ($body | to json -r)"
+
+        try {
+          http post $url $body -t application/json -H [
+            Authorization $"token ($env.GITHUB_TOKEN)"
+            Accept "application/vnd.github+json"
+          ]
+          log "reconcile-status [build-npm]: done"
+        } catch { |e|
+          log $"reconcile-status [build-npm]: error: ($e.msg)"
+          exit 1
+        }
+    - env: []
+      image: ghcr.io/pfenerty/apko-cicd/base:stable
+      name: resolve-test-npm
+      onError: continue
+      script: |-
+        #!/usr/bin/env nu
+        def log [msg: string] { print $"[(date now | format date '%H:%M:%S')] ($msg)" }
+        let status = "$(params.status-test-npm)"
+
+        if $status not-in ["None" "Failed"] {
+          log $"reconcile-status [test-npm]: task status is ($status), nothing to resolve"
+          exit 0
+        }
+
+        let state = if $status == "None" { "success" } else { "failure" }
+        let desc = if $status == "None" { "Skipped" } else { "Failed or terminated" }
+
+        let url = $"https://api.github.com/repos/$(params.repo-full-name)/statuses/$(params.revision)"
+        let body = { state: $state, context: "test-npm", description: $desc }
+
+        log $"reconcile-status [test-npm]: task status is ($status), POST ($url)"
+        log $"reconcile-status [test-npm]: body: ($body | to json -r)"
+
+        try {
+          http post $url $body -t application/json -H [
+            Authorization $"token ($env.GITHUB_TOKEN)"
+            Accept "application/vnd.github+json"
+          ]
+          log "reconcile-status [test-npm]: done"
+        } catch { |e|
+          log $"reconcile-status [test-npm]: error: ($e.msg)"
+          exit 1
+        }

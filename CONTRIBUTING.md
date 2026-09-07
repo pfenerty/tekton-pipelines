@@ -75,6 +75,25 @@ Run `tektonic lint` (or `npm run lint:scripts`) to syntax-check any `.sh`/`.bash
 3. Ensure `npm run build` and `npm test` pass
 4. Open a PR against `main`
 
+## Releasing
+
+The package is published to **npmjs as `@pfenerty/tektonic`** by Tektonic's own CI: the
+`npm-release` pipeline (`examples/self-ci.ts`) fires on a tag push, runs the test and build tasks
+first, then `publish-npm`.
+
+1. Bump `version` in `package.json`, commit, and push to `main`.
+2. Tag the commit `vX.Y.Z` and push the tag — the tag must match the package version, or
+   `publish-npm` fails rather than publishing whatever is in `package.json`.
+3. The pipeline is a no-op if that version is already on the registry, so re-running a release
+   is safe.
+
+The registry token comes from a Kubernetes Secret in the CI namespace, created out of band with
+an npm **automation** token (one that bypasses 2FA):
+
+```bash
+kubectl create secret generic npm-token -n tektonic-ci --from-literal=token=npm_xxx
+```
+
 ## Code conventions
 
 - TypeScript strict mode
