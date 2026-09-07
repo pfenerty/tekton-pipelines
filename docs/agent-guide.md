@@ -615,6 +615,29 @@ checks work without extra wiring. The matrixed param is supplied per-element by 
 is **not** surfaced as a pipeline-level param (but it is still declared on the produced Task
 manifest). Tekton array results are JSON — the parse task writes e.g. `["api","web"]`.
 
+## Limiting concurrency
+
+Tekton runs everything the DAG allows in parallel, which is right until the cluster cannot take
+it: a dozen image builds submitted at once on a single worker sit `Pending` with
+`Insufficient cpu` and finish no sooner than they would in sequence.
+
+```typescript
+import { serial, withConcurrency } from '@pfenerty/tektonic';
+
+new Pipeline({
+  tasks: [
+    goTest,
+    ...withConcurrency(imageBuilds, 2),   // at most two at a time
+    ...serial([migrate, deploy]),          // strictly one at a time
+  ],
+});
+```
+
+The ordering is a **per-pipeline overlay**, like `gated()`: `needs` is never mutated, so the
+same task instances can be chained in one pipeline and run in parallel in another, and any
+`needs` they already declare are kept (`withConcurrency(builds, 2)` on tasks that need `goTest`
+gives `runAfter: ['go-test', 'build-0']`). `gated()` overrides on a chained task survive too.
+
 ## Conditional Tasks (gated)
 
 For most cases use the `when`/`fanOut` **task attributes** above. `gated()` remains as the

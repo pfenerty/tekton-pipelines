@@ -75,12 +75,14 @@ export class Pipeline {
    */
   private readonly taskOverrides = new Map<TaskLike, PipelineTaskOverrides>();
   /**
-   * Producing tasks of a `gated()` override's {@link Condition}, keyed by the gated task.
-   * `TaskDef` wires the sources of its own `when` into `needs`; a `gated()` override cannot
-   * do that without mutating a task shared between pipelines, so the pipeline carries the
-   * edge instead — the sources are discovered and become `runAfter` entries.
+   * Extra graph edges contributed by an overlay, keyed by the task they point into: the
+   * producing tasks of a `gated()` override's {@link Condition}, and any `after` tasks a
+   * scheduling primitive chained it behind. `TaskDef` wires the sources of its own `when`
+   * into `needs`; an overlay cannot do that without mutating a task shared between
+   * pipelines, so the pipeline carries the edge instead — these are discovered and become
+   * `runAfter` entries exactly like `needs`.
    */
-  private readonly overrideSources = new Map<TaskLike, TaskLike[]>();
+  private readonly overrideEdges = new Map<TaskLike, TaskLike[]>();
   /** @internal Auto-generated task that sets all status contexts to pending at pipeline start. */
   protected readonly _pendingTask?: TaskDef;
 
@@ -197,20 +199,23 @@ export class Pipeline {
       );
     }
     this.taskOverrides.set(task, node._overrides);
-    if (node._overrides.when instanceof Condition) {
-      this.overrideSources.set(task, node._overrides.when.sources().map(unwrapGated));
-    }
+    const edges = [
+      ...(node._overrides.when instanceof Condition ? node._overrides.when.sources() : []),
+      ...(node._overrides.after ?? []),
+    ].map(unwrapGated);
+    if (edges.length > 0) this.overrideEdges.set(task, edges);
     return task;
   }
 
   /**
-   * Graph edges into `task`: its own `needs` plus the producing tasks of any `gated()`
-   * override condition, which the task itself does not know about.
+   * Graph edges into `task`: its own `needs` plus any the pipeline's overlay adds — the
+   * producing tasks of a `gated()` override condition, and `after` edges from a scheduling
+   * primitive — none of which the task itself knows about.
    */
   private dependenciesOf(task: TaskLike): TaskLike[] {
     const needs = task.needs.map(unwrapGated);
-    const sources = this.overrideSources.get(task) ?? [];
-    return [...needs, ...sources.filter(s => !needs.includes(s))];
+    const extra = this.overrideEdges.get(task) ?? [];
+    return [...needs, ...extra.filter(e => !needs.includes(e))];
   }
 
   /**

@@ -40,6 +40,13 @@ export interface PipelineTaskOverrides {
    */
   timeout?: string;
   /**
+   * Extra ordering edges for this pipeline appearance only: the task runs after each of
+   * these, exactly as if they were in its `needs`. Used by the scheduling primitives
+   * ({@link serial}, {@link withConcurrency}) to chain tasks per pipeline without mutating
+   * a `needs` array that other pipelines share.
+   */
+  after?: TaskLike[];
+  /**
    * Fan the task out into one TaskRun per element of an array param via a Tekton
    * `matrix`. Overrides the task's own `fanOut` attribute for this pipeline edge.
    * The matrixed param names are removed from the regular params in the emitted spec.
