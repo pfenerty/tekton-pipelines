@@ -10,7 +10,7 @@ import { TEKTON_API_V1, PAC_API, DEFAULT_POD_SECURITY_CONTEXT } from '../constan
 import type { CacheBackend } from './cache-backend';
 import type { LanguageName } from '../script';
 import { diffPaths } from './spec-diff';
-import { PAC_PARAM_BINDINGS, PAC_INJECTED_PARAMS } from './pac-params';
+import { PAC_PARAM_BINDINGS, PAC_INJECTED_PARAMS, PAC_EVENT_ENV, TEKTON_HOME } from './pac-params';
 
 /**
  * Environment variables the `tektonic` CLI sets on the process that runs a project entrypoint.
@@ -211,6 +211,19 @@ export interface TektonicProjectOptions {
    */
   podTemplateEnv?: Array<{ name: string; value?: string; valueFrom?: Record<string, unknown> }>;
   /**
+   * Inject the PAC event context — event type, branches, revision, repo — into every step as
+   * environment variables under the stable names in {@link PAC_EVENT_ENV}.
+   *
+   * Use it where the *event* rather than the code decides what a step does: a scan that runs
+   * diff-scoped on a pull request and full on a push, for instance. Without it, that meant
+   * knowing which PAC template variables exist, that PAC substitutes them before submission,
+   * and that `podTemplateEnv` is where they go. An entry of the same name in
+   * `podTemplateEnv` wins.
+   *
+   * Defaults to `false`.
+   */
+  pacEventContext?: boolean;
+  /**
    * Annotations merged into every generated PipelineRun's metadata, alongside the
    * PAC annotations. Use for Tekton Chains controls such as
    * `chains.tekton.dev/transparency-upload`.
@@ -263,6 +276,20 @@ export class TektonicProject {
       ...DEFAULT_POD_SECURITY_CONTEXT,
       ...(opts.defaultPodSecurityContext ?? {}),
     };
+
+    const podTemplateEnv = [...(opts.podTemplateEnv ?? [])];
+    const hasEnv = (name: string): boolean => podTemplateEnv.some(e => e.name === name);
+    if (opts.pacEventContext) {
+      for (const [name, value] of Object.entries(PAC_EVENT_ENV)) {
+        if (!hasEnv(name)) podTemplateEnv.push({ name, value });
+      }
+    }
+    // A pod-level runAsUser (set by default) normally has no /etc/passwd entry, so $HOME
+    // resolves to '/', which Tekton's creds-init cannot write to — taking git and registry
+    // credentials with it. /tekton/home is the writable directory Tekton mounts for this.
+    if ('runAsUser' in podSecurityContext && !hasEnv('HOME')) {
+      podTemplateEnv.push({ name: 'HOME', value: TEKTON_HOME });
+    }
 
     const pvcCaches = (opts.caches ?? []).filter(c => c.backend?.type !== 'gcs');
 
@@ -413,9 +440,7 @@ export class TektonicProject {
             serviceAccountName,
             podTemplate: {
               securityContext: podSecurityContext,
-              ...(opts.podTemplateEnv && opts.podTemplateEnv.length > 0
-                ? { env: opts.podTemplateEnv }
-                : {}),
+              ...(podTemplateEnv.length > 0 ? { env: podTemplateEnv } : {}),
             },
           },
           workspaces,

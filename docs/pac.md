@@ -172,6 +172,7 @@ When `repoRelativePath` is omitted it defaults to `outdir`.
 | `defaultStepSecurityContext` | — | Merged over `DEFAULT_STEP_SECURITY_CONTEXT` |
 | `defaultLanguage` | — | Default script language for bare-body steps |
 | `podTemplateEnv` | — | Env injected into every step of every task (see below) |
+| `pacEventContext` | `false` | Inject the PAC event context as `PAC_*` env vars (see below) |
 
 ### `podTemplateEnv`
 
@@ -184,6 +185,48 @@ podTemplateEnv: [{
   valueFrom: { secretKeyRef: { name: '{{ git_auth_secret }}', key: 'git-provider-token' } },
 }]
 ```
+
+### `pacEventContext`
+
+Set it to put the event context into every step as environment variables, substituted by PAC
+before the PipelineRun reaches Kubernetes:
+
+| Variable | PAC source |
+|----------|-----------|
+| `PAC_EVENT_TYPE` | `event_type` |
+| `PAC_TARGET_BRANCH` | `target_branch` |
+| `PAC_SOURCE_BRANCH` | `source_branch` |
+| `PAC_REVISION` | `revision` |
+| `PAC_REPO_URL` | `repo_url` |
+| `PAC_REPO_OWNER` / `PAC_REPO_NAME` | `repo_owner` / `repo_name` |
+
+Use it where the *event*, not the code, decides what a step does — a scan that runs diff-scoped
+on a pull request and full on a push:
+
+```typescript
+new TektonicProject({ /* … */ pacEventContext: true });
+
+// in a step
+script: sh`
+  if [ "$PAC_EVENT_TYPE" = "pull_request" ]; then
+    scan --baseline "origin/$PAC_TARGET_BRANCH"
+  else
+    scan --full
+  fi
+`
+```
+
+Only variables PAC provides for *every* event are injected; an event-specific one (a pull
+request number) stays a deliberate `podTemplateEnv` entry, because PAC leaves a variable it
+cannot resolve in place as literal text. A `podTemplateEnv` entry of the same name always wins.
+
+### `HOME`
+
+Every pod gets `HOME=/tekton/home` unless the project sets its own. A pod-level `runAsUser`
+(tektonic sets one by default) usually has no `/etc/passwd` entry, so `$HOME` resolves to `/`,
+which Tekton's creds-init cannot write to — taking git and registry credentials with it.
+`/tekton/home` is the writable directory Tekton mounts for exactly that. Override it by putting
+`HOME` in `podTemplateEnv`.
 
 See [secrets.md](secrets.md) for secret-injection patterns and [caching.md](caching.md) for
 cache configuration.

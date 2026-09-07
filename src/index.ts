@@ -16,7 +16,7 @@ export { PvcBackend } from "./lib/cache/pvc-backend";
 export { GcsBackend, gcs } from "./lib/cache/gcs-backend";
 export type { GcsBackendOptions } from "./lib/cache/gcs-backend";
 export { gated, GatedTask, unwrapGated } from "./lib/core/pipeline-task";
-export { PAC_PARAMS, PAC_PARAM_BINDINGS, PAC_INJECTED_PARAMS } from "./lib/core/pac-params";
+export { PAC_PARAMS, PAC_PARAM_BINDINGS, PAC_INJECTED_PARAMS, PAC_EVENT_ENV, TEKTON_HOME } from "./lib/core/pac-params";
 export { serial, withConcurrency } from "./lib/core/scheduling";
 export type { WhenExpression, MatrixSpec, PipelineTaskOverrides, PipelineTaskNode } from "./lib/core/pipeline-task";
 export {

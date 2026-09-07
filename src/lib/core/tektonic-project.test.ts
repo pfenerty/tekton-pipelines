@@ -412,3 +412,56 @@ describe('same-named tasks across pipelines', () => {
     ).toThrow(/task 'lint' is declared differently/);
   });
 });
+
+describe('pod template env', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    capturedCharts.length = 0;
+  });
+
+  const runOf = (opts: Record<string, unknown> = {}) => {
+    const task = new Task({ name: 'work', steps: [{ name: 's', image: 'alpine' }] });
+    const pipeline = new GitPipeline({
+      name: 'push',
+      trigger: { rules: [{ on: TRIGGER_EVENTS.PUSH }] },
+      tasks: [task],
+    });
+    new TektonicProject({ namespace: 'ci', pipelines: [pipeline], ...opts });
+    const run = capturedCharts
+      .flatMap(c => c.toJson())
+      .find((m: any) => m?.kind === 'PipelineRun');
+    return run.spec.taskRunTemplate.podTemplate.env as { name: string; value?: string }[];
+  };
+
+  // A pod-level runAsUser with no /etc/passwd entry leaves $HOME as '/', which creds-init
+  // cannot write to — git and registry credentials go with it.
+  it('sets HOME to /tekton/home by default', () => {
+    expect(runOf()).toContainEqual({ name: 'HOME', value: '/tekton/home' });
+  });
+
+  it('lets an explicit HOME win', () => {
+    const env = runOf({ podTemplateEnv: [{ name: 'HOME', value: '/root' }] });
+    expect(env.filter(e => e.name === 'HOME')).toEqual([{ name: 'HOME', value: '/root' }]);
+  });
+
+  it('injects the PAC event context on request', () => {
+    const env = runOf({ pacEventContext: true });
+    expect(env).toContainEqual({ name: 'PAC_EVENT_TYPE', value: '{{ event_type }}' });
+    expect(env).toContainEqual({ name: 'PAC_TARGET_BRANCH', value: '{{ target_branch }}' });
+    expect(env).toContainEqual({ name: 'PAC_REPO_NAME', value: '{{ repo_name }}' });
+  });
+
+  it('omits the PAC event context by default', () => {
+    expect(runOf().some(e => e.name.startsWith('PAC_'))).toBe(false);
+  });
+
+  it('lets podTemplateEnv override an injected PAC variable', () => {
+    const env = runOf({
+      pacEventContext: true,
+      podTemplateEnv: [{ name: 'PAC_EVENT_TYPE', value: 'override' }],
+    });
+    expect(env.filter(e => e.name === 'PAC_EVENT_TYPE')).toEqual([
+      { name: 'PAC_EVENT_TYPE', value: 'override' },
+    ]);
+  });
+});

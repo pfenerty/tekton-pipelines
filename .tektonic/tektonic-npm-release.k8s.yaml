@@ -130,6 +130,8 @@ spec:
             secretKeyRef:
               key: git-provider-token
               name: "{{ git_auth_secret }}"
+        - name: HOME
+          value: /tekton/home
       securityContext:
         fsGroup: 1001
         runAsGroup: 1001

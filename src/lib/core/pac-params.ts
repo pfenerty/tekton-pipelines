@@ -75,3 +75,36 @@ export const PAC_INJECTED_PARAMS: Param[] = [
   PAC_PARAMS.repoFullName,
   PAC_PARAMS.sourceBranch,
 ];
+
+/**
+ * Environment variables carrying the PAC event context into every step, injected when
+ * {@link TektonicProjectOptions.pacEventContext} is set.
+ *
+ * The values are PAC template variables, substituted before the PipelineRun reaches
+ * Kubernetes — so a step reads an ordinary env var and needs no pipeline param plumbing.
+ * Handy where the *event* rather than the code decides what to do: a security scan that runs
+ * diff-scoped on a pull request and full on a push, say.
+ *
+ * Only variables PAC provides for every event are included; anything event-specific (a pull
+ * request number) stays a deliberate `podTemplateEnv` entry, since PAC leaves an unavailable
+ * variable in place as literal text.
+ */
+export const PAC_EVENT_ENV: Record<string, string> = {
+  PAC_EVENT_TYPE: '{{ event_type }}',
+  PAC_TARGET_BRANCH: '{{ target_branch }}',
+  PAC_SOURCE_BRANCH: '{{ source_branch }}',
+  PAC_REVISION: '{{ revision }}',
+  PAC_REPO_URL: '{{ repo_url }}',
+  PAC_REPO_OWNER: '{{ repo_owner }}',
+  PAC_REPO_NAME: '{{ repo_name }}',
+};
+
+/**
+ * Home directory every pod gets unless the project sets its own `HOME`.
+ *
+ * A pod-level `runAsUser` (tektonic sets one by default) usually has no `/etc/passwd` entry,
+ * so `$HOME` resolves to `/` — which Tekton's creds-init cannot write to, taking git and
+ * registry credentials down with it. `/tekton/home` is the directory Tekton mounts writable
+ * for exactly this.
+ */
+export const TEKTON_HOME = '/tekton/home';
