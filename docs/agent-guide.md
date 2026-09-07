@@ -235,8 +235,8 @@ new TektonicProject({
   // Pull policy for every task's stepTemplate. Set 'Always' when steps reference images
   // by mutable tag: the kubelet defaults to IfNotPresent for every tag but ':latest', so
   // a republished tag is served from the node's image cache indefinitely, with no signal.
-  // Covers the injected cache/reporter steps too — but not sidecars, which Tekton
-  // excludes from stepTemplate and which carry their own `imagePullPolicy`.
+  // Covers the injected cache/reporter steps too, and sidecars: Tekton excludes those
+  // from stepTemplate, so tektonic stamps the policy onto each sidecar directly.
   defaultImagePullPolicy: 'Always',
 });
 ```
@@ -702,6 +702,9 @@ const dbTest = new Task({
   sidecars: [{
     name: 'postgres',
     image: 'postgres:16-alpine',
+    // Keeps PGDATA off the container's writable layer, so it needs no ephemeral-storage
+    // headroom of its own.
+    volumeMounts: [{ name: 'tmp', mountPath: '/var/lib/postgresql/data' }],
     env: [
       { name: 'POSTGRES_DB', value: 'testdb' },
       { name: 'POSTGRES_PASSWORD', value: 'test' },
@@ -715,7 +718,7 @@ const dbTest = new Task({
     name: 'test',
     image: 'node:22-alpine',
     env: [{ name: 'DATABASE_URL', value: 'postgres://postgres:test@localhost/testdb' }],
-    script: '#!/bin/sh\nnpm test',
+    script: sh`npm test`,
   }],
 });
 ```
@@ -726,13 +729,14 @@ const dbTest = new Task({
 |-------|------|-------------|
 | `name` | `string` | Sidecar name (unique within the task) |
 | `image` | `string` | Container image |
-| `imagePullPolicy?` | `'Always' \| 'IfNotPresent' \| 'Never'` | Pull policy. Tekton applies `stepTemplate` to steps only, so the project's `defaultImagePullPolicy` does **not** reach sidecars — set it here |
+| `imagePullPolicy?` | `'Always' \| 'IfNotPresent' \| 'Never'` | Pull policy. Tekton excludes sidecars from `stepTemplate`, so tektonic stamps the project's `defaultImagePullPolicy` on directly; set this to override it for one sidecar |
 | `command?` | `string[]` | Entrypoint override |
 | `args?` | `string[]` | Arguments |
-| `script?` | `string` | Inline script |
+| `script?` | `ScriptInput` | Inline script — the same tags, object form and `scriptFromFile` as a step, minus the exit-code contract (a sidecar reports no status) |
 | `workingDir?` | `string` | Working directory |
 | `env?` | `EnvSpec[]` | Environment variables |
 | `computeResources?` | `ResourceSpec` | CPU/memory requests and limits |
+| `volumeMounts?` | `VolumeMountSpec[]` | Volume mounts, referencing the task's `volumes` |
 | `securityContext?` | `object` | Per-container security context |
 | `readinessProbe?` | `object` | Kubernetes readiness probe (Tekton waits for this before starting steps) |
 

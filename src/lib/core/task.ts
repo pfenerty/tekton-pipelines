@@ -200,17 +200,24 @@ export interface TaskSidecarSpec {
     /** Container image to run. */
     image: string;
     /**
-     * Pull policy for this sidecar's image. Tekton applies `stepTemplate` to steps only,
-     * so a project-level `defaultImagePullPolicy` does **not** reach sidecars — set it
-     * here explicitly.
+     * Pull policy for this sidecar's image. Tekton applies `stepTemplate` to steps only, so
+     * a project-level `defaultImagePullPolicy` cannot reach sidecars through it — tektonic
+     * stamps it onto each sidecar directly instead. Set this to override that for one
+     * sidecar.
      */
     imagePullPolicy?: ImagePullPolicy;
     /** Entrypoint command override. */
     command?: string[];
     /** Arguments passed to the entrypoint. */
     args?: string[];
-    /** Inline script executed by the sidecar (requires an image with a shell). */
-    script?: string;
+    /**
+     * Inline script executed by the sidecar (requires an image with a shell). Accepts the
+     * same {@link ScriptInput} as a step — a language tag, an object form, or
+     * `scriptFromFile` — so sidecar bodies get the shebang, dedenting, `log` preamble and
+     * linting that step bodies get. The exit-code contract is never applied: a sidecar's
+     * lifetime is the task's, and it reports no status.
+     */
+    script?: ScriptInput;
     /** Working directory for the sidecar container. */
     workingDir?: string;
     /** Environment variables injected into the sidecar container. */
@@ -226,6 +233,18 @@ export interface TaskSidecarSpec {
     };
     /** Per-container security context override. */
     securityContext?: Record<string, unknown>;
+    /**
+     * Volume mounts for this sidecar. Each entry must reference a volume declared in the
+     * task's `volumes` array. Sharing an `emptyDir` with a step is the usual way to hand
+     * files to or from a sidecar; a volume also keeps a database sidecar's data dir off the
+     * container's writable layer.
+     */
+    volumeMounts?: {
+        name: string;
+        mountPath: string;
+        readOnly?: boolean;
+        subPath?: string;
+    }[];
     /**
      * Probe used by Tekton to determine when the sidecar is ready to serve traffic.
      * Follows the Kubernetes `v1.Probe` schema.
@@ -537,6 +556,23 @@ export class TaskDef implements TaskLike {
             return out;
         };
 
+        // Tekton applies stepTemplate to steps only, so the project's default pull policy
+        // cannot reach a sidecar that way — stamp it on here, letting the sidecar's own
+        // setting win.
+        const renderSidecar = (sc: TaskSidecarSpec): Record<string, unknown> => {
+            const { script, imagePullPolicy, ...rest } = sc;
+            const out: Record<string, unknown> = { ...rest };
+            if (defaultImagePullPolicy || imagePullPolicy) {
+                out.imagePullPolicy = imagePullPolicy ?? defaultImagePullPolicy;
+            }
+            if (script !== undefined) {
+                // libCtx: no exit-code capture — a sidecar reports no status and outlives
+                // the steps that do.
+                out.script = renderScript(script, { ...libCtx, stepName: sc.name }, defaultLanguage);
+            }
+            return out;
+        };
+
         const steps = [
             ...restoreSteps.map((s) => renderStep(s, libCtx, false)),
             ...this.steps.map((s) => renderStep(s, userCtx, reporting)),
@@ -569,7 +605,7 @@ export class TaskDef implements TaskLike {
                 }),
                 steps,
                 ...(this.sidecars.length > 0 && {
-                    sidecars: this.sidecars,
+                    sidecars: this.sidecars.map((sc) => renderSidecar(sc)),
                 }),
                 ...(this.volumes.length > 0 && {
                     volumes: this.volumes,

@@ -8,7 +8,7 @@ import { HubTaskRef } from './hub-task-ref';
 import { gcs } from '../cache/gcs-backend';
 import { RESTRICTED_STEP_SECURITY_CONTEXT, DEFAULT_STEP_RESOURCES, DEFAULT_BASE_IMAGE, DEFAULT_GCS_CACHE_IMAGE } from '../constants';
 import { GitHubStatusReporter } from '../reporters/github-status-reporter';
-import { nu, EXIT_CODE_PATH } from '../script';
+import { nu, sh, EXIT_CODE_PATH } from '../script';
 import { onBranch } from './condition';
 
 describe('Task', () => {
@@ -1315,6 +1315,76 @@ describe('Task', () => {
       expect(manifest.spec.sidecars[0].name).toBe('postgres');
       expect(manifest.spec.sidecars[0].image).toBe('postgres:16-alpine');
       expect(manifest.spec.sidecars[0].env).toEqual([{ name: 'POSTGRES_PASSWORD', value: 'test' }]);
+    });
+
+    it('mounts a task volume in a sidecar', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      new Task({
+        name: 'with-sidecar',
+        steps: [{ name: 'run', image: 'alpine', volumeMounts: [{ name: 'pgdata', mountPath: '/out' }] }],
+        volumes: [{ name: 'pgdata', emptyDir: {} }],
+        sidecars: [{
+          name: 'postgres',
+          image: 'postgres:16-alpine',
+          volumeMounts: [{ name: 'pgdata', mountPath: '/var/lib/postgresql/data' }],
+        }],
+      }).synth(chart, 'ns');
+      const manifest = chart.toJson()[0] as any;
+      expect(manifest.spec.sidecars[0].volumeMounts).toEqual([
+        { name: 'pgdata', mountPath: '/var/lib/postgresql/data' },
+      ]);
+    });
+
+    it('renders a tagged sidecar script through its language, without exit-code capture', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      new Task({
+        name: 'with-sidecar',
+        steps: [{ name: 'run', image: 'alpine' }],
+        sidecars: [{
+          name: 'mock-api',
+          image: 'alpine',
+          script: sh`
+            set -e
+            exec nc -lk -p 8080
+          `,
+        }],
+      }).synth(chart, 'ns');
+      const script = (chart.toJson()[0] as any).spec.sidecars[0].script as string;
+      expect(script.startsWith('#!/bin/sh')).toBe(true);
+      expect(script).toContain('exec nc -lk -p 8080');
+      // A sidecar reports no status and outlives the steps that do.
+      expect(script).not.toContain(EXIT_CODE_PATH);
+    });
+
+    // Tekton applies stepTemplate to steps only, so the project default cannot reach a
+    // sidecar that way — tektonic stamps it on directly.
+    it('inherits the project default image pull policy, and lets the sidecar override it', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      new Task({
+        name: 'with-sidecar',
+        steps: [{ name: 'run', image: 'alpine' }],
+        sidecars: [
+          { name: 'db', image: 'postgres:16-alpine' },
+          { name: 'cache', image: 'redis:7', imagePullPolicy: 'IfNotPresent' },
+        ],
+      }).synth(chart, 'ns', undefined, undefined, undefined, 'Always');
+      const sidecars = (chart.toJson()[0] as any).spec.sidecars;
+      expect(sidecars[0].imagePullPolicy).toBe('Always');
+      expect(sidecars[1].imagePullPolicy).toBe('IfNotPresent');
+    });
+
+    it('omits imagePullPolicy when neither the sidecar nor the project sets one', () => {
+      const app = new App();
+      const chart = new Chart(app, 'test');
+      new Task({
+        name: 'with-sidecar',
+        steps: [{ name: 'run', image: 'alpine' }],
+        sidecars: [{ name: 'db', image: 'postgres:16-alpine' }],
+      }).synth(chart, 'ns');
+      expect((chart.toJson()[0] as any).spec.sidecars[0].imagePullPolicy).toBeUndefined();
     });
 
     it('omits sidecars from spec when none declared', () => {
