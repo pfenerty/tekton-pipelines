@@ -18,10 +18,8 @@ const grypeImage = "ghcr.io/pfenerty/apko-cicd/grype:0.110.0";
 
 // ─── Params ──────────────────────────────────────────────────────────────────
 // The PAC-injected params are typed handles rather than hand-declared Params plus raw
-// `$(params.…)` strings — the project binds them on every PipelineRun. For a tag push,
-// `sourceBranch` carries the tag ref.
+// `$(params.…)` strings — the project binds them on every PipelineRun.
 const sourceBranchParam = PAC_PARAMS.sourceBranch;
-const tagNameParam = PAC_PARAMS.sourceBranch;
 
 // ─── Status reporter ─────────────────────────────────────────────────────────
 // Under PAC, reuse the git-auth token via the pod env (see podTemplateEnv below)
@@ -205,67 +203,6 @@ const anchoreScann = new Task({
 });
 
 
-// Publishing runs only on tag pushes (see releasePipeline below). The token comes from a
-// Kubernetes Secret in the CI namespace — create it out of band with an npm automation token:
-//   kubectl create secret generic npm-token -n tektonic-ci --from-literal=token=npm_xxx
-const npmPublish = new Task({
-    name: "publish-npm",
-    needs: [npmBuild],
-    params: [sourceBranchParam],
-    statusReporter,
-    steps: [
-        {
-            name: "publish",
-            image: nodeImage,
-            workingDir: "$(workspaces.workspace.path)",
-            env: [
-                {
-                    name: "NPM_TOKEN",
-                    valueFrom: { secretKeyRef: { name: "npm-token", key: "token" } },
-                },
-                // npm's user config normally lives in $HOME, which is read-only in the pod;
-                // point it at the workspace so the auth line can be written at all.
-                {
-                    name: "NPM_CONFIG_USERCONFIG",
-                    value: "$(workspaces.workspace.path)/.npmrc",
-                },
-            ],
-            // POSIX sh: the publish is a handful of ordinary commands, and `set -e` plus a
-            // natural exit is exactly what the exit-code contract wants (see docs/scripting.md).
-            // Command substitution uses backticks, not `$(...)`, so it cannot collide with
-            // Tekton's own `$(...)` interpolation — the same rule the git-clone step follows.
-            script: sh`
-                set -e
-                VERSION=\`node -p "require('./package.json').version"\`
-                TAG_REF="${tagNameParam}"
-                TAG=\${TAG_REF#refs/tags/}
-                echo "publish-npm: package version $VERSION, tag $TAG"
-
-                # The tag must name the version being published, or a mistagged release would
-                # quietly publish whatever happens to be in package.json.
-                case "$TAG" in
-                  "v$VERSION"|"$VERSION") ;;
-                  *) echo "publish-npm: tag '$TAG' does not match package version '$VERSION'"; exit 1 ;;
-                esac
-
-                # Republishing an existing version is an npm error, and re-running a release
-                # pipeline is routine — treat "already there" as success.
-                if npm view "@pfenerty/tektonic@$VERSION" version >/dev/null 2>&1; then
-                  echo "publish-npm: $VERSION is already on the registry, nothing to do"
-                  exit 0
-                fi
-
-                if [ ! -d node_modules ]; then npm ci; fi
-                npm run build
-                printf '//registry.npmjs.org/:_authToken=%s\\n' "$NPM_TOKEN" > "$NPM_CONFIG_USERCONFIG"
-                npm publish --access public
-                rm -f "$NPM_CONFIG_USERCONFIG"
-                echo "publish-npm: published $VERSION"
-            `,
-        },
-    ],
-});
-
 // ─── Pipelines ───────────────────────────────────────────────────────────────
 const pushPipeline = new GitPipeline({
     name: "npm-push",
@@ -279,14 +216,6 @@ const prPipeline = new GitPipeline({
     tasks: [npmTest, npmBuild, anchoreScann],
 });
 
-// Tag pushes publish to npmjs. Test and build run first (publish-npm needs them), so a tag on a
-// broken commit fails before anything reaches the registry.
-const releasePipeline = new GitPipeline({
-    name: "npm-release",
-    trigger: { rules: [{ on: TRIGGER_EVENTS.TAG }] },
-    tasks: [npmPublish],
-});
-
 // ─── Synthesize ──────────────────────────────────────────────────────────────
 // In-repo PAC PipelineRun templates under .tektonic/, read by the PAC operator.
 // The PipelineRun ServiceAccount ("tekton-triggers") is expected to be pre-created
@@ -294,7 +223,7 @@ const releasePipeline = new GitPipeline({
 new TektonicProject({
     name: "tektonic",
     namespace: "tektonic-ci",
-    pipelines: [pushPipeline, prPipeline, releasePipeline],
+    pipelines: [pushPipeline, prPipeline],
     outdir: ".tektonic",
     workspaceStorageSize: "3Gi",
     repository: { url: "https://github.com/pfenerty/tektonic" },

@@ -77,22 +77,41 @@ Run `tektonic lint` (or `npm run lint:scripts`) to syntax-check any `.sh`/`.bash
 
 ## Releasing
 
-The package is published to **npmjs as `@pfenerty/tektonic`** by Tektonic's own CI: the
-`npm-release` pipeline (`examples/self-ci.ts`) fires on a tag push, runs the test and build tasks
-first, then `publish-npm`.
+The package is published to **npmjs as `@pfenerty/tektonic`** by the `publish` GitHub Actions
+workflow (`.github/workflows/publish.yml`), triggered by a `vX.Y.Z` tag.
+
+Publishing uses npm **trusted publishing** (OIDC): the workflow mints a short-lived credential
+from its `id-token: write` permission, so no npm token exists anywhere — not in the repo, not in
+the cluster. npm also generates a provenance attestation automatically, since this is a public
+package built from a public repo.
+
+It lives in Actions rather than in Tektonic's own Tekton pipeline because npm only accepts
+GitHub Actions, GitLab CI/CD and CircleCI as OIDC issuers; a self-hosted cluster cannot be a
+trusted publisher (npm lists self-hosted runner support as planned). Everything else — test,
+build, SBOM and vulnerability scan — still runs in Tekton on push and pull request.
+
+### Cutting a release
 
 1. Bump `version` in `package.json`, commit, and push to `main`.
-2. Tag the commit `vX.Y.Z` and push the tag — the tag must match the package version, or
-   `publish-npm` fails rather than publishing whatever is in `package.json`.
-3. The pipeline is a no-op if that version is already on the registry, so re-running a release
-   is safe.
+2. Tag the commit `vX.Y.Z` and push the tag. The workflow refuses to publish when the tag does
+   not match the package version, re-runs `npm test` and `npm run build`, and is a no-op if that
+   version is already on the registry — so re-running a release is safe.
 
-The registry token comes from a Kubernetes Secret in the CI namespace, created out of band with
-an npm **automation** token (one that bypasses 2FA):
+### One-time setup
+
+Trusted publishing is configured on an **existing** package, so the very first publish is manual:
 
 ```bash
-kubectl create secret generic npm-token -n tektonic-ci --from-literal=token=npm_xxx
+npm login                       # a 2FA session, valid for two hours
+npm publish --access public     # first release only
 ```
+
+Then, on npmjs.com → the package → Settings → Trusted Publishers, add a GitHub Actions publisher
+for repository `pfenerty/tektonic` with workflow `publish.yml`. Every later release goes through
+the tag.
+
+> Classic automation tokens are not an option: npm revoked all of them in December 2025, and
+> granular tokens with write access now expire after at most 90 days.
 
 ## Code conventions
 
