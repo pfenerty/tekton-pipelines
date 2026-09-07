@@ -1,7 +1,10 @@
+import { createHash } from "crypto";
 import { Task } from "./task";
+import type { TaskLike } from "./task";
 import { Result } from "./result";
 import { Workspace } from "./workspace";
 import { Condition, equals } from "./condition";
+import type { WhenClause } from "./condition";
 import { DEFAULT_BASE_IMAGE } from "../constants";
 import { sh } from "../script";
 
@@ -63,7 +66,85 @@ export function onChanges(paths: string[] | OnChangesOptions): Condition {
     if (opts.paths.length === 0) {
         throw new Error("onChanges: at least one path is required");
     }
+    return new ChangesCondition(opts, buildDetection(opts));
+}
 
+/**
+ * A change rule, paired with the options it was built from so that
+ * {@link Condition._unionWith} can fold an `or` of several into one detection task.
+ */
+class ChangesCondition extends Condition {
+    constructor(
+        readonly opts: OnChangesOptions,
+        private readonly inner: Condition,
+    ) {
+        super();
+    }
+
+    compile(): WhenClause[] {
+        return this.inner.compile();
+    }
+
+    sources(): TaskLike[] {
+        return this.inner.sources();
+    }
+
+    /**
+     * Folds `or(onChanges(a), onChanges(b))` into a single detection task over the union of
+     * the paths, gated by a classic `in` guard.
+     *
+     * "Either of these path sets changed" is exactly "any path in their union changed", so
+     * the union is the same rule with one task instead of two plus a CEL guard — and CEL
+     * guards need the `enable-cel-in-whenexpression` feature flag, which is off by default.
+     * Without this, gating on several path sets meant hand-maintaining a third detection
+     * task whose paths had to be kept in sync with the other two.
+     *
+     * Only folds when every operand is a change rule agreeing on base, image and workspace:
+     * those decide what the single task would have to be, and a mismatch has no single
+     * answer. Anything else falls back to the CEL join.
+     */
+    _unionWith(others: Condition[]): Condition | undefined {
+        const all = [this, ...others];
+        if (!all.every((c): c is ChangesCondition => c instanceof ChangesCondition)) return undefined;
+        const sameEnvironment = all.every(
+            c =>
+                (c.opts.base ?? DEFAULT_CHANGE_BASE) === (this.opts.base ?? DEFAULT_CHANGE_BASE) &&
+                c.opts.image === this.opts.image &&
+                c.opts.workspace === this.opts.workspace,
+        );
+        if (!sameEnvironment) return undefined;
+
+        const paths = [...new Set(all.flatMap(c => c.opts.paths))];
+        return onChanges({
+            ...this.opts,
+            paths,
+            name: unionName(all.map(c => c.opts.name ?? DEFAULT_DETECTION_TASK_NAME)),
+        });
+    }
+}
+
+/** Default name of the task {@link onChanges} generates. */
+const DEFAULT_DETECTION_TASK_NAME = "detect-changes";
+
+/**
+ * A stable, readable name for a union detection task: `detect-go-changes` and
+ * `detect-node-changes` become `detect-go-node-changes`. Names that do not follow that shape
+ * are joined as-is, and anything over the 63-character Kubernetes limit is truncated with a
+ * short digest so it stays unique.
+ */
+function unionName(names: string[]): string {
+    const parts = [...new Set(names)];
+    const cores = parts.map(n => n.replace(/^detect-/, "").replace(/-changes$/, ""));
+    const joined = cores.every(c => c.length > 0)
+        ? `detect-${cores.join("-")}-changes`
+        : parts.join("-or-");
+    if (joined.length <= 63) return joined;
+    const digest = createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 8);
+    return `${joined.slice(0, 54)}-${digest}`;
+}
+
+/** Creates the detection task for one change rule and returns the guard on its result. */
+function buildDetection(opts: OnChangesOptions): Condition {
     const changed = new Result({
         name: "changed",
         description: "'true' when any of the watched paths changed vs the trunk",
@@ -95,7 +176,7 @@ export function onChanges(paths: string[] | OnChangesOptions): Condition {
         fi`;
 
     new Task({
-        name: opts.name ?? "detect-changes",
+        name: opts.name ?? DEFAULT_DETECTION_TASK_NAME,
         results: [changed],
         workspaces: opts.workspace ? [opts.workspace] : [],
         steps: [

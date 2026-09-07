@@ -63,6 +63,17 @@ export abstract class Condition {
     and(...others: Condition[]): Condition {
         return new AndCondition([this, ...others]);
     }
+
+    /**
+     * @internal Optional hook letting a condition kind express an OR of its own kind as one
+     * classic guard instead of CEL. {@link or} offers the remaining operands to the first
+     * one; returning `undefined` (the default) falls back to the CEL join.
+     *
+     * The hook exists so `changes.ts` can fold `or(onChanges(a), onChanges(b))` into a
+     * single union detection task without `condition.ts` having to know what a detection
+     * task is — an import it cannot take without a cycle.
+     */
+    _unionWith?(others: Condition[]): Condition | undefined;
 }
 
 /** De-duplicates a list of task nodes preserving order. */
@@ -157,12 +168,25 @@ export const and = (...conditions: Condition[]): Condition => new AndCondition(c
 /**
  * Logical OR of the given conditions.
  *
- * Classic Tekton `when` cannot OR across distinct inputs, so `or` compiles every
- * branch to a CEL comparison and joins them with `||` into a single CEL guard.
- * Requires the `enable-cel-in-whenexpression` feature flag. For a portable
- * alternative, compute the boolean in a task and gate on its result.
+ * Classic Tekton `when` cannot OR across distinct inputs, so `or` compiles every branch to a
+ * CEL comparison and joins them with `||` into a single CEL guard, which requires the
+ * cluster's `enable-cel-in-whenexpression` feature flag.
+ *
+ * Two shapes avoid the flag entirely:
+ * - `or(c)` — a single operand is returned unchanged.
+ * - `or(onChanges(a), onChanges(b))` — an OR of change rules that agree on base, image and
+ *   workspace folds into **one** detection task over the union of their paths, gated by a
+ *   classic `in` guard. See {@link onChanges}.
+ *
+ * For anything else on a cluster without the flag, compute the boolean in a task and gate on
+ * its result.
  */
 export const or = (...conditions: Condition[]): Condition => {
+    if (conditions.length === 1) return conditions[0];
+    if (conditions.length > 1) {
+        const folded = conditions[0]._unionWith?.(conditions.slice(1));
+        if (folded) return folded;
+    }
     const toCel = (clause: WhenClause): string => {
         if ("cel" in clause) return `(${clause.cel})`;
         const list = clause.values.map((v) => `'${v}'`).join(", ");

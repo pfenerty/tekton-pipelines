@@ -520,7 +520,7 @@ const deploy = new Task({
 | `onBranch(name)` / `onBranches(names)` | on the given branch(es) | classic `in` |
 | `onBranchMatching(pattern)` | branch matches an RE2 pattern | CEL guard |
 | `a.and(b)` / `and(...)` | logical AND | concatenated `when` clauses |
-| `or(...)` | logical OR | single CEL guard |
+| `or(...)` | logical OR | single CEL guard — except the two shapes below |
 | `not(c)` | negation | flips `in`↔`notin`, else CEL |
 
 `onBranch*` reference the normalized `source-branch` pipeline param (e.g. `main`), which
@@ -566,6 +566,15 @@ trigger plumbing.
 > `onBranchMatching`, `or`, and negation of compound conditions) compile to **CEL** guards, which
 > require the cluster's `enable-cel-in-whenexpression` feature flag. The DSL keeps this boundary
 > visible so you know which rules carry a runtime requirement.
+>
+> Two `or` shapes stay classic and need no flag:
+> - `or(c)` — one operand is returned unchanged.
+> - `or(onChanges(a), onChanges(b))` — an OR of change rules that agree on `base`, `image` and
+>   `workspace` folds into **one** detection task over the union of their paths, named after the
+>   operands (`detect-go-changes` + `detect-node-changes` → `detect-go-node-changes`). "Either
+>   set changed" is exactly "any path in the union changed", so this is the same rule with one
+>   task instead of two plus a CEL guard — and it removes the hand-maintained union detection
+>   task that pattern otherwise needs. Any other mix falls back to CEL.
 
 `when` also accepts raw `WhenClause[]` for full control.
 

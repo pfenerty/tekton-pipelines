@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { App, Chart } from 'cdk8s';
 import { onChanges } from './changes';
+import { or, onBranch } from './condition';
 import { Task } from './task';
 import { Pipeline } from './pipeline';
 import { Workspace } from './workspace';
@@ -94,5 +95,78 @@ describe('onChanges', () => {
     expect(pipeline.allTasks.map(t => t.name)).toContain('detect-changes');
     // no diff-base (or any) param is introduced by change detection
     expect(pipeline.inferParams().map((p: AnyObj) => p.name)).not.toContain('diff-base');
+  });
+});
+
+describe('or() of change rules', () => {
+  const detectionTasks = (pipeline: Pipeline) =>
+    pipeline.allTasks.map(t => t.name).filter(n => n.startsWith('detect-'));
+
+  // CEL guards need the enable-cel-in-whenexpression feature flag, which is off by default —
+  // so gating on two path sets used to mean hand-maintaining a third union detection task.
+  it('folds into one detection task with a classic guard', () => {
+    const go = onChanges({ paths: ['api/**'], name: 'detect-go-changes' });
+    const node = onChanges({ paths: ['web/**'], name: 'detect-node-changes' });
+    const union = or(go, node);
+
+    const clauses = union.compile();
+    expect(clauses).toHaveLength(1);
+    expect(clauses[0]).not.toHaveProperty('cel');
+    expect(clauses[0]).toMatchObject({ operator: 'in', values: ['true'] });
+    expect((clauses[0] as { input: string }).input).toBe(
+      '$(tasks.detect-go-node-changes.results.changed)',
+    );
+  });
+
+  it('unions the pathspecs of every operand', () => {
+    const union = or(
+      onChanges({ paths: ['api/**', 'go.mod'], name: 'detect-go-changes' }),
+      onChanges({ paths: ['web/**', 'api/**'], name: 'detect-node-changes' }),
+    );
+    const task = union.sources()[0] as Task;
+    const app = new App();
+    const chart = new Chart(app, 'test');
+    task.synth(chart, 'ns');
+    const script = (chart.toJson()[0] as AnyObj).spec.steps[0].script as string;
+    expect(script).toContain(`':(glob)api/**'`);
+    expect(script).toContain(`':(glob)go.mod'`);
+    expect(script).toContain(`':(glob)web/**'`);
+    // Duplicated paths appear once.
+    expect(script.match(/:\(glob\)api\/\*\*/g)).toHaveLength(1);
+  });
+
+  it('wires only the union task into the gated task', () => {
+    const union = or(
+      onChanges({ paths: ['api/**'], name: 'detect-go-changes' }),
+      onChanges({ paths: ['web/**'], name: 'detect-node-changes' }),
+    );
+    const scan = new Task({ name: 'semgrep', when: union, steps: [{ name: 's', image: 'semgrep' }] });
+    const pipeline = new Pipeline({ name: 'ci', tasks: [scan] });
+    expect(detectionTasks(pipeline)).toEqual(['detect-go-node-changes']);
+  });
+
+  it('falls back to CEL when the operands disagree on the base branch', () => {
+    const union = or(
+      onChanges({ paths: ['api/**'], base: 'main' }),
+      onChanges({ paths: ['web/**'], base: 'develop' }),
+    );
+    expect(union.compile()[0]).toHaveProperty('cel');
+  });
+
+  it('falls back to CEL for a mixed or()', () => {
+    const union = or(onBranch('main'), onChanges(['api/**']));
+    expect(union.compile()[0]).toHaveProperty('cel');
+  });
+
+  it('returns a single operand unchanged, with no CEL', () => {
+    const single = onChanges(['api/**']);
+    expect(or(single)).toBe(single);
+  });
+
+  it('keeps the union task name within the Kubernetes limit', () => {
+    const long = (i: number) => onChanges({ paths: [`p${i}/**`], name: `detect-${'x'.repeat(20)}${i}-changes` });
+    const union = or(long(1), long(2), long(3), long(4));
+    const name = (union.sources()[0] as Task).name;
+    expect(name.length).toBeLessThanOrEqual(63);
   });
 });
